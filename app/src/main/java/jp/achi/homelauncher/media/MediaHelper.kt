@@ -46,14 +46,15 @@ class MediaHelper(context: Context) {
 
     fun start() {
         stop()
-        if (!isPermitted() || manager == null) {
+        val mgr = manager
+        if (!isPermitted() || mgr == null) {
             _state.value = State(permitted = false)
             return
         }
         runCatching {
-            manager.addOnActiveSessionsChangedListener(sessionsListener, component)
+            mgr.addOnActiveSessionsChangedListener(sessionsListener, component)
             listening = true
-            attach(manager.getActiveSessions(component))
+            attach(mgr.getActiveSessions(component))
         }.onFailure {
             // 許可の取り消し直後などで SecurityException になることがある
             _state.value = State(permitted = false)
