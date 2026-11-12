@@ -17,6 +17,7 @@ object BackupCodec {
         val dock: List<String>,
         val counts: Map<String, Int>,
         val folders: List<Folder> = emptyList(),
+        val lastLaunch: Map<String, Long> = emptyMap(),
     )
 
     fun encode(
@@ -25,6 +26,7 @@ object BackupCodec {
         dock: List<String>,
         counts: Map<String, Int>,
         folders: List<Folder> = emptyList(),
+        lastLaunch: Map<String, Long> = emptyMap(),
     ): String {
         val portableItems = items.map { if (it.type == HomeItem.WIDGET) it.copy(widgetId = -1) else it }
         return JSONObject().apply {
@@ -36,6 +38,7 @@ object BackupCodec {
             put("dock", LayoutJson.stringsToJson(dock))
             put("launchCounts", LayoutJson.countsToJson(counts))
             put("folders", Folder.listToJson(folders))
+            put("lastLaunch", JSONObject().also { o -> lastLaunch.forEach { (k, v) -> o.put(k, v) } })
         }.toString(2)
     }
 
@@ -55,12 +58,21 @@ object BackupCodec {
         val dock = LayoutJson.stringsFromJson(o.optJSONArray("dock"))
         val counts = LayoutJson.countsFromJson(o.optJSONObject("launchCounts"))
         val folders = Folder.listFromJson(o.optJSONArray("folders"))
+        val lastLaunch = buildMap<String, Long> {
+            val lo = o.optJSONObject("lastLaunch") ?: return@buildMap
+            val keys = lo.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                put(k, lo.optLong(k, 0L))
+            }
+        }
         return Backup(
             settings = settings,
             items = items.map { if (it.type == HomeItem.WIDGET) it.copy(widgetId = -1) else it },
             dock = dock,
             counts = counts,
             folders = folders,
+            lastLaunch = lastLaunch,
         )
     }
 }

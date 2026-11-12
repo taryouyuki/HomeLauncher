@@ -5,6 +5,8 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,16 +21,19 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,21 +42,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.achi.homelauncher.LauncherViewModel
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppSorter
+import jp.achi.homelauncher.data.PlaceResult
 import jp.achi.homelauncher.data.SortMode
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
-/** 下から上スワイプで開くアプリ一覧。名前/更新/起動順の並び替えと部分一致検索に対応。 */
+/** 下から上スワイプで開くアプリ一覧。5種類の並び替えと部分一致検索に対応。 */
 @Composable
 fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
@@ -59,21 +68,28 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
     val counts by vm.counts.collectAsStateWithLifecycle()
+    val lastLaunch by vm.lastLaunch.collectAsStateWithLifecycle()
+    val folders by vm.folders.collectAsStateWithLifecycle()
 
     var query by remember { mutableStateOf("") }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
     var folderPickApp by remember { mutableStateOf<AppInfo?>(null) }
-    val folders by vm.folders.collectAsStateWithLifecycle()
-    val dateFmt = remember { java.text.SimpleDateFormat("yy/MM/dd", java.util.Locale.JAPAN) }
+    val dateFmt = remember { SimpleDateFormat("yy/MM/dd", Locale.JAPAN) }
+    val dateTimeFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.JAPAN) }
 
-    val list = remember(apps, query, settings.drawerSort, counts) {
-        AppSorter.sort(AppSorter.filter(apps, query), settings.drawerSort, counts)
+    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch) {
+        AppSorter.sort(AppSorter.filter(apps, query), settings.drawerSort, counts, lastLaunch)
     }
 
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-    ) {
+    val custom = settings.drawerBgMode == "custom"
+    val baseColor = if (custom) Color(settings.drawerBgColor) else MaterialTheme.colorScheme.surface
+    val bg = baseColor.copy(alpha = settings.drawerBgAlpha)
+    // 好きな色の背景では、明るさに応じてアプリ名の色を切り替える
+    val labelColor: Color? = if (custom) {
+        if (baseColor.luminance() > 0.5f) Color(0xFF1B1B1F) else Color.White
+    } else null
+
+    Surface(modifier = Modifier.fillMaxSize(), color = bg) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
             // 上部のつまみ: 下へドラッグで閉じる
             Box(
@@ -115,18 +131,24 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 }),
                 shape = RoundedCornerShape(28.dp),
                 colors = TextFieldDefaults.colors(
-                    focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
                 ),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             )
 
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 SortChip("名前順", settings.drawerSort == SortMode.NAME) { vm.setDrawerSort(SortMode.NAME) }
-                Box(Modifier.width(8.dp))
+                SortChip("最終起動順", settings.drawerSort == SortMode.LAST_LAUNCH) { vm.setDrawerSort(SortMode.LAST_LAUNCH) }
+                SortChip("ダウンロード順", settings.drawerSort == SortMode.INSTALL) { vm.setDrawerSort(SortMode.INSTALL) }
+                SortChip("よく使う順", settings.drawerSort == SortMode.FREQUENT) { vm.setDrawerSort(SortMode.FREQUENT) }
                 SortChip("更新順", settings.drawerSort == SortMode.UPDATED) { vm.setDrawerSort(SortMode.UPDATED) }
-                Box(Modifier.width(8.dp))
-                SortChip("起動順", settings.drawerSort == SortMode.LAUNCH) { vm.setDrawerSort(SortMode.LAUNCH) }
             }
 
             LazyVerticalGrid(
@@ -140,10 +162,13 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                         showLabel = true,
                         labelSizeSp = settings.labelSizeSp,
                         onWallpaper = false,
+                        labelColor = labelColor,
                         subLabel = when (settings.drawerSort) {
-                            SortMode.UPDATED -> dateFmt.format(java.util.Date(app.updatedAt))
-                            SortMode.LAUNCH -> "${counts[app.key] ?: 0}回"
                             SortMode.NAME -> null
+                            SortMode.LAST_LAUNCH -> lastLaunch[app.key]?.let { dateTimeFmt.format(Date(it)) } ?: "未起動"
+                            SortMode.INSTALL -> dateFmt.format(Date(app.installedAt))
+                            SortMode.FREQUENT -> "${counts[app.key] ?: 0}回"
+                            SortMode.UPDATED -> dateFmt.format(Date(app.updatedAt))
                         },
                         modifier = Modifier.padding(vertical = 8.dp),
                         onClick = {
@@ -178,7 +203,7 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
             entries = listOf(
                 "ホーム画面に追加" to {
                     menuApp = null
-                    if (vm.addAppAuto(app)) {
+                    if (vm.addAppAuto(app) != PlaceResult.FAILED) {
                         toast(context, "ホーム画面に追加しました")
                         onClose()
                     } else {

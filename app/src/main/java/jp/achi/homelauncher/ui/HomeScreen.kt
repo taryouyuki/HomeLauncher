@@ -61,6 +61,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,6 +82,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import jp.achi.homelauncher.CellAt
 import jp.achi.homelauncher.LauncherViewModel
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppSorter
@@ -89,8 +91,11 @@ import jp.achi.homelauncher.data.Folder
 import jp.achi.homelauncher.data.GridLogic
 import jp.achi.homelauncher.data.HomeItem
 import jp.achi.homelauncher.data.LauncherSettings
+import jp.achi.homelauncher.data.PlaceResult
 import jp.achi.homelauncher.data.SortMode
 import jp.achi.homelauncher.media.MediaHelper
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -106,6 +111,7 @@ private class HomeEnv(
     val media: MediaHelper,
     val onSelect: (String) -> Unit,
     val onLaunch: (AppInfo) -> Unit,
+    val onLaunchShortcut: (HomeItem) -> Unit,
     val onOpenFolder: (String) -> Unit,
     val onOpenSearch: () -> Unit,
     val onRequestNotificationAccess: () -> Unit,
@@ -124,6 +130,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
 
     val settings by vm.settings.collectAsStateWithLifecycle()
     val items by vm.items.collectAsStateWithLifecycle()
@@ -135,12 +142,16 @@ fun HomeScreen(
     val appMap = remember(apps) { apps.associateBy { it.key } }
 
     var selectedId by remember { mutableStateOf<String?>(null) }
+    var carrying by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var emptyMenu by remember { mutableStateOf(false) }
+    /** 空き地を長押しした位置(ページ, 列, 行)。メニューで追加するものはここに置く。 */
+    var pendingAt by remember { mutableStateOf<CellAt?>(null) }
     var editItem by remember { mutableStateOf<HomeItem?>(null) }
     var showWidgetPicker by remember { mutableStateOf(false) }
     /** ウィジェット追加先。空文字ならホーム直置き、それ以外はスタックの item id。 */
     var widgetTarget by remember { mutableStateOf("") }
+    var widgetAt by remember { mutableStateOf<CellAt?>(null) }
     var showAppPicker by remember { mutableStateOf(false) }
     var openFolderId by remember { mutableStateOf<String?>(null) }
     var folderPickItem by remember { mutableStateOf<HomeItem?>(null) }
@@ -159,6 +170,7 @@ fun HomeScreen(
         // ホームボタンで戻ってきたら、検索・編集モード・メニューを閉じて1ページ目へ
         searchOpen = false
         selectedId = null
+        carrying = false
         emptyMenu = false
         openFolderId = null
         pagerState.scrollToPage(0)
@@ -181,19 +193,29 @@ fun HomeScreen(
         vm.launch(context, app)
     }
 
+    /** 配置結果をお知らせする(空きなし/重ねた/ずらした)。 */
+    fun report(r: PlaceResult) {
+        when (r) {
+            PlaceResult.FAILED -> toast(context, "ホーム画面に空きがありません")
+            PlaceResult.OVERLAPPED -> toast(context, vm.overlapMessage())
+            PlaceResult.PLACED -> Unit
+        }
+    }
+
     /** ウィジェット追加。結果はアクティビティ結果経由で非同期に返る。 */
-    fun addWidget(info: AppWidgetProviderInfo, parent: String) {
+    fun addWidget(info: AppWidgetProviderInfo, parent: String, at: CellAt?) {
         val activity = context.findActivity()
         if (activity == null) {
             toast(context, "ウィジェットを追加できません")
             return
         }
         widgets.add(activity, info) { id, inf ->
+            val provider = inf.provider.flattenToString()
             if (parent.isNotEmpty()) {
                 vm.addWidget(
                     HomeItem(
                         type = HomeItem.WIDGET, page = 0, x = 0, y = 0,
-                        widgetId = id, provider = inf.provider.flattenToString(), parent = parent,
+                        widgetId = id, provider = provider, parent = parent,
                     ),
                 )
                 return@add
@@ -202,17 +224,26 @@ fun HomeScreen(
             val d = density.density
             val sx = ceil((inf.minWidth / d) / cellDp.first).toInt().coerceIn(1, s.gridCols)
             val sy = ceil((inf.minHeight / d) / cellDp.second).toInt().coerceIn(1, s.gridRows)
-            val cell = GridLogic.findFreeCell(vm.items.value, s.pageCount, s.gridCols, s.gridRows, sx, sy)
-            if (cell == null) {
-                widgets.delete(id)
-                toast(context, "ホーム画面に空きがありません")
-            } else {
-                vm.addWidget(
-                    HomeItem(
-                        type = HomeItem.WIDGET, page = cell.first, x = cell.second, y = cell.third,
-                        spanX = sx, spanY = sy, widgetId = id, provider = inf.provider.flattenToString(),
-                    ),
+            if (at != null) {
+                // 長押しした場所に置く。既存の項目があれば設定に従って被せる/ずらす
+                val item = HomeItem(
+                    type = HomeItem.WIDGET, page = at.first, x = at.second, y = at.third,
+                    spanX = sx, spanY = sy, widgetId = id, provider = provider,
                 )
+                if (vm.placeAndResolve(item)) toast(context, vm.overlapMessage())
+            } else {
+                val cell = GridLogic.findFreeCell(vm.items.value, s.pageCount, s.gridCols, s.gridRows, sx, sy)
+                if (cell == null) {
+                    widgets.delete(id)
+                    toast(context, "ホーム画面に空きがありません")
+                } else {
+                    vm.addWidget(
+                        HomeItem(
+                            type = HomeItem.WIDGET, page = cell.first, x = cell.second, y = cell.third,
+                            spanX = sx, spanY = sy, widgetId = id, provider = provider,
+                        ),
+                    )
+                }
             }
         }
     }
@@ -228,6 +259,25 @@ fun HomeScreen(
             .forEach { widgets.delete(it.widgetId) }
     }
 
+    /** ドラッグ移動・リサイズの確定。アイコンを別のアイコン/フォルダに重ねた場合はフォルダにまとめる。 */
+    fun commitMove(sel: HomeItem, page: Int, nx: Int, ny: Int, nsx: Int, nsy: Int) {
+        if (sel.type == HomeItem.APP && nsx == 1 && nsy == 1) {
+            val target = vm.items.value.firstOrNull { t ->
+                t.id != sel.id && t.parent.isEmpty() && t.page == page &&
+                    (t.type == HomeItem.APP || t.type == HomeItem.FOLDER) &&
+                    GridLogic.overlaps(t, nx, ny, 1, 1)
+            }
+            if (target != null && vm.mergeIntoFolder(sel.id, target.id)) {
+                selectedId = null
+                toast(context, "フォルダにまとめました")
+                return
+            }
+        }
+        val stored = vm.items.value.firstOrNull { it.id == sel.id } ?: return
+        val collided = vm.placeAndResolve(stored.copy(page = page, x = nx, y = ny, spanX = nsx, spanY = nsy))
+        if (collided) toast(context, vm.overlapMessage())
+    }
+
     val env = HomeEnv(
         settings = settings,
         appMap = appMap,
@@ -238,6 +288,11 @@ fun HomeScreen(
         media = media,
         onSelect = { select(it) },
         onLaunch = { launchApp(it) },
+        onLaunchShortcut = {
+            if (!ShortcutHelper.launch(context, it.pkg, it.cls)) {
+                toast(context, "ショートカットを開けません(デフォルトのホームに設定されているか確認してください)")
+            }
+        },
         onOpenFolder = { openFolderId = it },
         onOpenSearch = { searchOpen = true },
         onRequestNotificationAccess = onRequestNotificationAccess,
@@ -248,12 +303,17 @@ fun HomeScreen(
             .fillMaxSize()
             .background(Color.Black.copy(alpha = settings.scrimAlpha))
             .pointerInput(Unit) {
-                // 下から上へのスワイプでアプリ一覧(編集中のドラッグは子が消費するので反応しない)
+                // 下から上へのスワイプでアプリ一覧。ウィジェットに触れて始めたスクロールは
+                // ウィジェット内の動きを優先し、アプリ一覧は開かない。
                 var total = 0f
+                var ignore = false
                 detectVerticalDragGestures(
-                    onDragStart = { total = 0f },
+                    onDragStart = {
+                        total = 0f
+                        ignore = SwipeGuard.widgetTouched
+                    },
                     onVerticalDrag = { _, dy -> total += dy },
-                    onDragEnd = { if (total < -120f) onOpenDrawer() },
+                    onDragEnd = { if (!ignore && total < -120f) onOpenDrawer() },
                 )
             },
     ) {
@@ -265,6 +325,7 @@ fun HomeScreen(
                 val cellH = maxHeight / rows
                 val cellWpx = with(density) { cellW.toPx() }
                 val cellHpx = with(density) { cellH.toPx() }
+                val viewportWpx = with(density) { maxWidth.toPx() }
                 LaunchedEffect(cellW, cellH) { cellDp = cellW.value to cellH.value }
 
                 HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
@@ -274,15 +335,24 @@ fun HomeScreen(
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .pointerInput(Unit) {
+                            .pointerInput(page, cellWpx, cellHpx, cols, rows) {
                                 detectTapGestures(
                                     onTap = { selectedId = null },
-                                    onLongPress = {
-                                        if (!vm.settings.value.lockLayout) {
-                                            buzz()
-                                            selectedId = null
-                                            emptyMenu = true
+                                    onLongPress = { off ->
+                                        val s = vm.settings.value
+                                        if (s.lockLayout) return@detectTapGestures
+                                        val cx = (off.x / cellWpx).toInt().coerceIn(0, cols - 1)
+                                        val cy = (off.y / cellHpx).toInt().coerceIn(0, rows - 1)
+                                        // アイテムの上の長押しは、そのアイテム側(編集モード)で処理する
+                                        val onItem = vm.items.value.any {
+                                            it.parent.isEmpty() && it.page == page &&
+                                                GridLogic.overlaps(GridLogic.clamp(it, s.gridCols, s.gridRows), cx, cy, 1, 1)
                                         }
+                                        if (onItem) return@detectTapGestures
+                                        buzz()
+                                        selectedId = null
+                                        pendingAt = Triple(page, cx, cy)
+                                        emptyMenu = true
                                     },
                                 )
                             },
@@ -290,18 +360,29 @@ fun HomeScreen(
                         for (item in shown) {
                             key(item.id) { GridItem(item, env, cellW, cellH) }
                         }
-                        val sel = shown.firstOrNull { it.id == selectedId }
-                        if (sel != null) {
-                            EditFrame(sel, cellWpx, cellHpx, cols, rows) { nx, ny, nsx, nsy ->
-                                val others = items.filter { it.id != sel.id }
-                                if (GridLogic.isFree(others, sel.page, nx, ny, nsx, nsy)) {
-                                    vm.updateItem(sel.id) { it.copy(x = nx, y = ny, spanX = nsx, spanY = nsy) }
-                                } else {
-                                    toast(context, "他のアイコン・ウィジェットと重なります")
-                                }
-                            }
-                        }
                     }
+                }
+
+                // 編集枠はページの外(ビューポート基準)に置き、ページをまたいでドラッグできるようにする
+                val sel = selectedItem?.takeIf { it.parent.isEmpty() }
+                if (sel != null && (sel.page == pagerState.currentPage || carrying)) {
+                    EditFrame(
+                        item = GridLogic.clamp(sel, cols, rows),
+                        cellWpx = cellWpx,
+                        cellHpx = cellHpx,
+                        cols = cols,
+                        rows = rows,
+                        viewportWpx = viewportWpx,
+                        carrying = carrying,
+                        onCarry = { carrying = it },
+                        onEdge = { dir ->
+                            scope.launch {
+                                pagerState.animateScrollToPage(
+                                    (pagerState.currentPage + dir).coerceIn(0, vm.settings.value.pageCount - 1),
+                                )
+                            }
+                        },
+                    ) { nx, ny, nsx, nsy -> commitMove(sel, pagerState.currentPage, nx, ny, nsx, nsy) }
                 }
             }
 
@@ -312,43 +393,51 @@ fun HomeScreen(
             if (settings.showDock) {
                 val perPage = settings.dockCount
                 val dockPages = (dock.size + perPage) / perPage // ceil((size + 1) / perPage)
-                val dockPager = rememberPagerState(pageCount = { dockPages })
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f), RoundedCornerShape(28.dp))
-                        .padding(vertical = 8.dp),
-                ) {
-                    HorizontalPager(
-                        state = dockPager,
-                        modifier = Modifier.fillMaxWidth().height((settings.iconSizeDp + 8).dp),
-                    ) { p ->
-                        Row(
-                            Modifier.fillMaxSize(),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            for (i in 0 until perPage) {
-                                val idx = p * perPage + i
-                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                                    DockSlot(
-                                        entry = dock.getOrNull(idx),
-                                        env = env,
-                                        onEmpty = { if (!settings.lockLayout) dockEmptyIndex = idx },
-                                        onLong = {
-                                            if (!settings.lockLayout) {
-                                                buzz()
-                                                dockMenuIndex = idx
-                                            }
-                                        },
-                                    )
+                val loop = settings.dockLoop && dockPages > 1
+                val virtualCount = if (loop) dockPages * 1000 else dockPages
+                key(dockPages, loop) {
+                    val dockPager = rememberPagerState(
+                        initialPage = if (loop) dockPages * 500 else 0,
+                        pageCount = { virtualCount },
+                    )
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
+                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f), RoundedCornerShape(28.dp))
+                            .padding(vertical = 8.dp),
+                    ) {
+                        HorizontalPager(
+                            state = dockPager,
+                            modifier = Modifier.fillMaxWidth().height(settings.dockHeightDp.dp),
+                        ) { vp ->
+                            val p = vp % dockPages
+                            Row(
+                                Modifier.fillMaxSize(),
+                                horizontalArrangement = Arrangement.SpaceEvenly,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                for (i in 0 until perPage) {
+                                    val idx = p * perPage + i
+                                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                        DockSlot(
+                                            entry = dock.getOrNull(idx),
+                                            env = env,
+                                            onEmpty = { if (!settings.lockLayout) dockEmptyIndex = idx },
+                                            onLong = {
+                                                if (!settings.lockLayout) {
+                                                    buzz()
+                                                    dockMenuIndex = idx
+                                                }
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
-                    }
-                    if (dockPages > 1) {
-                        PageDots(count = dockPages, current = dockPager.currentPage)
+                        if (dockPages > 1) {
+                            PageDots(count = dockPages, current = dockPager.currentPage % dockPages)
+                        }
                     }
                 }
             }
@@ -392,34 +481,36 @@ fun HomeScreen(
 
     // ---- メニュー・ダイアログ ----
     if (emptyMenu) {
+        val at = pendingAt
         val entries = buildList<Pair<String, () -> Unit>> {
-            add("ウィジェットを追加" to {
+            add("ここにウィジェットを追加" to {
                 emptyMenu = false
                 widgetTarget = ""
+                widgetAt = at
                 showWidgetPicker = true
             })
-            add("ウィジェットスタックを作成" to {
+            add("ここにウィジェットスタックを作成" to {
                 emptyMenu = false
-                if (!vm.createStack()) toast(context, "ホーム画面に空きがありません")
+                report(vm.createStack(at))
             })
-            add("アプリをホームに追加" to {
+            add("ここにアプリを追加" to {
                 emptyMenu = false
                 showAppPicker = true
             })
-            add("フォルダを作成" to {
+            add("ここにフォルダを作成" to {
                 emptyMenu = false
                 newFolderAt = -1
             })
             if (items.none { it.type == HomeItem.SEARCH }) {
-                add("検索バーを追加" to {
+                add("ここに検索バーを追加" to {
                     emptyMenu = false
-                    if (!vm.addSpecial(HomeItem.SEARCH)) toast(context, "ホーム画面に空きがありません")
+                    report(vm.addSpecial(HomeItem.SEARCH, at))
                 })
             }
             if (items.none { it.type == HomeItem.MEDIA }) {
-                add("メディアバーを追加" to {
+                add("ここにメディアバーを追加" to {
                     emptyMenu = false
-                    if (!vm.addSpecial(HomeItem.MEDIA)) toast(context, "ホーム画面に空きがありません")
+                    report(vm.addSpecial(HomeItem.MEDIA, at))
                 })
             }
             add("壁紙を変更" to {
@@ -442,11 +533,10 @@ fun HomeScreen(
     editItem?.let { item ->
         ItemEditDialog(
             item = item,
-            allItems = items,
             settings = settings,
             onApply = { updated ->
-                vm.updateItem(item.id) { updated }
                 editItem = null
+                if (vm.placeAndResolve(updated)) toast(context, vm.overlapMessage())
             },
             onDismiss = { editItem = null },
         )
@@ -457,18 +547,19 @@ fun HomeScreen(
             widgets = widgets,
             onPick = {
                 showWidgetPicker = false
-                addWidget(it, widgetTarget)
+                addWidget(it, widgetTarget, widgetAt)
             },
             onDismiss = { showWidgetPicker = false },
         )
     }
 
     if (showAppPicker) {
+        val at = pendingAt
         AppPickerDialog(
             apps = AppSorter.sort(apps, SortMode.NAME, emptyMap()),
             onPick = {
                 showAppPicker = false
-                if (!vm.addAppAuto(it)) toast(context, "ホーム画面に空きがありません")
+                report(vm.addAppAuto(it, at))
             },
             onDismiss = { showAppPicker = false },
         )
@@ -490,7 +581,7 @@ fun HomeScreen(
                     launchApp(it)
                 },
                 onPutOnHome = { app ->
-                    if (vm.addAppByKey(app.key)) vm.removeFromFolder(folder.id, app.key)
+                    if (vm.addAppByKey(app.key) != PlaceResult.FAILED) vm.removeFromFolder(folder.id, app.key)
                     else toast(context, "ホーム画面に空きがありません")
                 },
                 onRemoveFromFolder = { vm.removeFromFolder(folder.id, it.key) },
@@ -518,13 +609,15 @@ fun HomeScreen(
     }
 
     newFolderAt?.let { at ->
+        val cell = pendingAt
         TextInputDialog(
             title = "フォルダ名",
             initial = "",
             onConfirm = { name ->
                 newFolderAt = null
-                val created = vm.createFolder(name, if (at >= 0) at else null)
-                if (created == null) toast(context, "ホーム画面に空きがありません")
+                val created = vm.createFolder(name, if (at >= 0) at else null, cell)
+                if (created == null) report(PlaceResult.FAILED)
+                else if (at < 0 && vm.lastPlace == PlaceResult.OVERLAPPED) report(PlaceResult.OVERLAPPED)
             },
             onDismiss = { newFolderAt = null },
         )
@@ -538,6 +631,7 @@ fun HomeScreen(
             onAdd = {
                 stackManageId = null
                 widgetTarget = sid
+                widgetAt = null
                 showWidgetPicker = true
             },
             onRemove = { child ->
@@ -666,6 +760,16 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                     )
                 }
             }
+            HomeItem.SHORTCUT -> ShortcutCell(
+                item = item,
+                iconSizeDp = iconDp,
+                showLabel = s.showLabels,
+                labelSizeSp = s.labelSizeSp,
+                iconAlpha = iconAlpha,
+                modifier = Modifier.fillMaxSize(),
+                onClick = { env.onLaunchShortcut(item) },
+                onLongClick = { env.onSelect(item.id) },
+            )
             HomeItem.FOLDER -> {
                 val folder = env.folders.firstOrNull { it.id == item.ref }
                 if (folder != null) {
@@ -689,7 +793,6 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 alphaValue = if (item.alpha >= 0f) item.alpha else s.widgetGlobalAlpha,
                 widthDp = w.value.toInt(),
                 heightDp = h.value.toInt(),
-                showHandle = !s.lockLayout,
                 onSelect = { env.onSelect(item.id) },
             )
             HomeItem.STACK -> StackBox(
@@ -698,16 +801,17 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 settings = s,
                 widthDp = w.value.toInt(),
                 heightDp = h.value.toInt(),
-                showHandle = !s.lockLayout,
                 onSelect = { env.onSelect(item.id) },
             )
             HomeItem.SEARCH -> SearchBarTile(
+                bgAlpha = if (item.alpha >= 0f) item.alpha else s.searchBarAlpha,
                 onClick = env.onOpenSearch,
                 onLongClick = { env.onSelect(item.id) },
             )
             HomeItem.MEDIA -> MediaBar(
                 state = env.mediaState,
                 media = env.media,
+                bgAlpha = if (item.alpha >= 0f) item.alpha else s.mediaBarAlpha,
                 onRequestPermission = env.onRequestNotificationAccess,
                 onLongClick = { env.onSelect(item.id) },
             )
@@ -715,7 +819,10 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
     }
 }
 
-/** 選択中の項目の枠。本体をドラッグで移動、右下のつまみをドラッグでリサイズ(離すとグリッドにスナップ)。 */
+/**
+ * 選択中の項目の枠。本体をドラッグで移動、右下のつまみをドラッグでリサイズ(離すとマスにスナップ)。
+ * 左右の端に寄せたままにすると隣のページへ送り、ページをまたいで移動できる。
+ */
 @Composable
 private fun EditFrame(
     item: HomeItem,
@@ -723,6 +830,10 @@ private fun EditFrame(
     cellHpx: Float,
     cols: Int,
     rows: Int,
+    viewportWpx: Float,
+    carrying: Boolean,
+    onCarry: (Boolean) -> Unit,
+    onEdge: (Int) -> Unit,
     onCommit: (x: Int, y: Int, sx: Int, sy: Int) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -735,6 +846,23 @@ private fun EditFrame(
     val shape = RoundedCornerShape(12.dp)
     val primary = MaterialTheme.colorScheme.primary
 
+    // 端に寄せている間、一定間隔でページを送る
+    val edgePx = with(density) { 40.dp.toPx() }
+    val centerX = item.x * cellWpx + dx + (baseW + dw) / 2f
+    val edgeDir = if (!carrying) 0 else when {
+        centerX < edgePx -> -1
+        centerX > viewportWpx - edgePx -> 1
+        else -> 0
+    }
+    LaunchedEffect(edgeDir) {
+        if (edgeDir != 0) {
+            while (true) {
+                delay(700)
+                onEdge(edgeDir)
+            }
+        }
+    }
+
     Box(
         Modifier
             .offset { IntOffset((item.x * cellWpx + dx).roundToInt(), (item.y * cellHpx + dy).roundToInt()) }
@@ -746,16 +874,19 @@ private fun EditFrame(
             .background(primary.copy(alpha = 0.15f), shape)
             .pointerInput(item.id, item.x, item.y, item.spanX, item.spanY, cols, rows) {
                 detectDragGestures(
+                    onDragStart = { onCarry(true) },
                     onDragEnd = {
                         val nx = ((item.x * cellWpx + dx) / cellWpx).roundToInt().coerceIn(0, cols - item.spanX)
                         val ny = ((item.y * cellHpx + dy) / cellHpx).roundToInt().coerceIn(0, rows - item.spanY)
                         dx = 0f
                         dy = 0f
+                        onCarry(false)
                         onCommit(nx, ny, item.spanX, item.spanY)
                     },
                     onDragCancel = {
                         dx = 0f
                         dy = 0f
+                        onCarry(false)
                     },
                     onDrag = { change, amount ->
                         change.consume()
@@ -814,10 +945,11 @@ private fun PageDots(count: Int, current: Int) {
     }
 }
 
-/** ドックの1スロット。アプリ・フォルダ・空きのいずれか。 */
+/** ドックの1スロット。アプリ・フォルダ・空きのいずれか。アイコンの不透明度・大きさはドック専用の設定を使う。 */
 @Composable
 private fun DockSlot(entry: String?, env: HomeEnv, onEmpty: () -> Unit, onLong: () -> Unit) {
     val s = env.settings
+    val iconDp = min(s.iconSizeDp, s.dockHeightDp - 8).coerceAtLeast(24)
     val folderId = entry?.let { DockEntry.folderId(it) }
     val folder = folderId?.let { id -> env.folders.firstOrNull { it.id == id } }
     val app = if (folderId == null && entry != null) env.appMap[entry] else null
@@ -825,27 +957,27 @@ private fun DockSlot(entry: String?, env: HomeEnv, onEmpty: () -> Unit, onLong: 
         folder != null -> FolderTile(
             folder = folder,
             appMap = env.appMap,
-            iconSizeDp = s.iconSizeDp,
+            iconSizeDp = iconDp,
             showLabel = false,
             labelSizeSp = s.labelSizeSp,
-            iconAlpha = s.iconAlpha,
+            iconAlpha = s.dockIconAlpha,
             onWallpaper = false,
             onClick = { env.onOpenFolder(folder.id) },
             onLongClick = onLong,
         )
         app != null -> AppCell(
             app = app,
-            iconSizeDp = s.iconSizeDp,
+            iconSizeDp = iconDp,
             showLabel = false,
             labelSizeSp = s.labelSizeSp,
             onWallpaper = false,
             onClick = { env.onLaunch(app) },
             onLongClick = onLong,
-            iconAlpha = s.iconAlpha,
+            iconAlpha = s.dockIconAlpha,
         )
         else -> Box(
             Modifier
-                .size(s.iconSizeDp.dp)
+                .size(iconDp.dp)
                 .clip(CircleShape)
                 .clickable(onClick = onEmpty),
             contentAlignment = Alignment.Center,
@@ -856,14 +988,14 @@ private fun DockSlot(entry: String?, env: HomeEnv, onEmpty: () -> Unit, onLong: 
 }
 
 @Composable
-private fun SearchBarTile(onClick: () -> Unit, onLongClick: () -> Unit) {
+private fun SearchBarTile(bgAlpha: Float, onClick: () -> Unit, onLongClick: () -> Unit) {
     val shape = RoundedCornerShape(28.dp)
     Box(
         Modifier
             .fillMaxSize()
             .padding(4.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = bgAlpha))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -878,11 +1010,12 @@ private fun SearchBarTile(onClick: () -> Unit, onLongClick: () -> Unit) {
     }
 }
 
-/** メディア操作バー。背景を不透明に近くし、文字色を明示して視認性を確保している。 */
+/** メディア操作バー。文字色を明示し、背景の不透明度は設定(個別設定)で変えられる。 */
 @Composable
 private fun MediaBar(
     state: MediaHelper.State,
     media: MediaHelper,
+    bgAlpha: Float,
     onRequestPermission: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -893,7 +1026,7 @@ private fun MediaBar(
             .fillMaxSize()
             .padding(4.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f))
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = bgAlpha))
             .combinedClickable(onClick = {}, onLongClick = onLongClick),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -1003,18 +1136,21 @@ private fun SearchOverlay(
     }
 }
 
-/** 位置・サイズ・不透明度を数値で編集する(ドラッグ操作の補助)。 */
+/** 位置・サイズ・不透明度を数値で編集する(ドラッグ操作の補助)。重なる場合は設定の動作で配置する。 */
 @Composable
 private fun ItemEditDialog(
     item: HomeItem,
-    allItems: List<HomeItem>,
     settings: LauncherSettings,
     onApply: (HomeItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
-    val hasAlpha = item.type == HomeItem.APP || item.type == HomeItem.FOLDER || item.type == HomeItem.WIDGET
-    val globalAlpha = if (item.type == HomeItem.WIDGET) settings.widgetGlobalAlpha else settings.iconAlpha
+    val hasAlpha = item.type != HomeItem.STACK
+    val globalAlpha = when (item.type) {
+        HomeItem.WIDGET -> settings.widgetGlobalAlpha
+        HomeItem.SEARCH -> settings.searchBarAlpha
+        HomeItem.MEDIA -> settings.mediaBarAlpha
+        else -> settings.iconAlpha
+    }
     var page by remember { mutableIntStateOf(item.page + 1) }
     var x by remember { mutableIntStateOf(item.x + 1) }
     var y by remember { mutableIntStateOf(item.y + 1) }
@@ -1053,20 +1189,16 @@ private fun ItemEditDialog(
         },
         confirmButton = {
             Button(onClick = {
-                val candidate = item.copy(
-                    page = page.coerceIn(1, settings.pageCount) - 1,
-                    x = x.coerceIn(1, xMax) - 1,
-                    y = y.coerceIn(1, yMax) - 1,
-                    spanX = spanX,
-                    spanY = spanY,
-                    alpha = if (!hasAlpha || useGlobal) -1f else alphaV,
+                onApply(
+                    item.copy(
+                        page = page.coerceIn(1, settings.pageCount) - 1,
+                        x = x.coerceIn(1, xMax) - 1,
+                        y = y.coerceIn(1, yMax) - 1,
+                        spanX = spanX,
+                        spanY = spanY,
+                        alpha = if (!hasAlpha || useGlobal) -1f else alphaV,
+                    ),
                 )
-                val others = allItems.filter { it.id != item.id }
-                if (GridLogic.isFree(others, candidate.page, candidate.x, candidate.y, candidate.spanX, candidate.spanY)) {
-                    onApply(candidate)
-                } else {
-                    toast(context, "その位置は他のアイコン・ウィジェットと重なります")
-                }
             }) { Text("適用") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },

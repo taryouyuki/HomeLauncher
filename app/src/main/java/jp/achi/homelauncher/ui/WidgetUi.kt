@@ -84,6 +84,24 @@ fun Modifier.detectLongPress(onLongPress: () -> Unit): Modifier = pointerInput(U
     }
 }
 
+/** ウィジェット上でタッチ中かどうか。ウィジェット内のスクロールを優先し、アプリ一覧の上スワイプを抑止するために使う。 */
+object SwipeGuard {
+    @Volatile
+    var widgetTouched: Boolean = false
+}
+
+/** ウィジェットに触れている間、SwipeGuard を立てる(入力は消費しない)。 */
+fun Modifier.blockDrawerSwipe(): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        SwipeGuard.widgetTouched = true
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+        } while (event.changes.any { it.pressed })
+        SwipeGuard.widgetTouched = false
+    }
+}
+
 /**
  * スタック内のウィジェットを左右スワイプで切り替える。
  * 初期パスで横方向のドラッグを奪うので、クリックを処理するウィジェットの上でもスワイプできる。
@@ -151,7 +169,6 @@ fun WidgetBox(
     alphaValue: Float,
     widthDp: Int,
     heightDp: Int,
-    showHandle: Boolean,
     onSelect: () -> Unit,
 ) {
     val currentSelect by rememberUpdatedState(onSelect)
@@ -159,6 +176,7 @@ fun WidgetBox(
         Modifier
             .fillMaxSize()
             .padding(2.dp)
+            .blockDrawerSwipe()
             .detectLongPress { currentSelect() },
     ) {
         AndroidView(
@@ -170,19 +188,6 @@ fun WidgetBox(
             },
             modifier = Modifier.fillMaxSize().alpha(alphaValue),
         )
-        if (showHandle) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(onClick = onSelect),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("⋮", color = Color.White)
-            }
-        }
     }
 }
 
@@ -194,7 +199,6 @@ fun StackBox(
     settings: LauncherSettings,
     widthDp: Int,
     heightDp: Int,
-    showHandle: Boolean,
     onSelect: () -> Unit,
 ) {
     val pagerState = rememberPagerState(pageCount = { children.size.coerceAtLeast(1) })
@@ -204,6 +208,7 @@ fun StackBox(
     Box(
         Modifier
             .fillMaxSize()
+            .blockDrawerSwipe()
             .stackSwipe(pagerState, scope)
             .detectLongPress { currentSelect() },
     ) {
@@ -237,7 +242,6 @@ fun StackBox(
                         alphaValue = if (child.alpha >= 0f) child.alpha else settings.widgetGlobalAlpha,
                         widthDp = widthDp,
                         heightDp = heightDp,
-                        showHandle = false,
                         onSelect = onSelect,
                     )
                 }
@@ -257,19 +261,6 @@ fun StackBox(
                         )
                     }
                 }
-            }
-        }
-        if (showHandle) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(onClick = onSelect),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("⋮", color = Color.White)
             }
         }
     }

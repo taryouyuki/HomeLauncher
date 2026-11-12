@@ -31,6 +31,23 @@ class LauncherPrefs(context: Context) {
         sp.edit().putString(KEY_DOCK, LayoutJson.stringsToJson(dock).toString()).apply()
     }
 
+    fun loadLastLaunch(): Map<String, Long> = runCatching {
+        val o = JSONObject(sp.getString(KEY_LAST_LAUNCH, "{}"))
+        buildMap<String, Long> {
+            val keys = o.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                put(k, o.optLong(k, 0L))
+            }
+        }
+    }.getOrDefault(emptyMap())
+
+    fun saveLastLaunch(map: Map<String, Long>) {
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        sp.edit().putString(KEY_LAST_LAUNCH, o.toString()).apply()
+    }
+
     fun loadFolders(): List<Folder> =
         runCatching { Folder.listFromJson(JSONArray(sp.getString(KEY_FOLDERS, "[]"))) }
             .getOrDefault(emptyList())
@@ -69,6 +86,7 @@ class LauncherPrefs(context: Context) {
         const val KEY_DOCK = "dock"
         const val KEY_COUNTS = "launch_counts"
         const val KEY_FOLDERS = "folders"
+        const val KEY_LAST_LAUNCH = "last_launch"
         const val KEY_LAYOUT_V2 = "layout_v2_done"
     }
 }

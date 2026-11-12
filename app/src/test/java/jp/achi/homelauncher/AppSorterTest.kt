@@ -30,8 +30,26 @@ class AppSorterTest {
     @Test
     fun sortByLaunchCountDescendingWithNameTieBreak() {
         val counts = mapOf("pkg.Maps/Main" to 5, "pkg.Chrome/Main" to 5, "pkg.Camera/Main" to 1)
-        val r = AppSorter.sort(apps, SortMode.LAUNCH, counts).map { it.label }
+        val r = AppSorter.sort(apps, SortMode.FREQUENT, counts).map { it.label }
         assertEquals(listOf("Chrome", "Maps", "Camera"), r)
+    }
+
+    @Test
+    fun sortByLastLaunchNewestFirstAndNeverLaunchedLast() {
+        val last = mapOf("pkg.Maps/Main" to 900L, "pkg.Camera/Main" to 500L)
+        val r = AppSorter.sort(apps, SortMode.LAST_LAUNCH, emptyMap(), last).map { it.label }
+        assertEquals(listOf("Maps", "Camera", "Chrome"), r)
+    }
+
+    @Test
+    fun sortByInstallNewestFirst() {
+        val a = listOf(
+            AppInfo("A", "pkg.A", "Main", 0L, 10L),
+            AppInfo("B", "pkg.B", "Main", 0L, 30L),
+            AppInfo("C", "pkg.C", "Main", 0L, 20L),
+        )
+        val r = AppSorter.sort(a, SortMode.INSTALL, emptyMap()).map { it.label }
+        assertEquals(listOf("B", "C", "A"), r)
     }
 
     @Test

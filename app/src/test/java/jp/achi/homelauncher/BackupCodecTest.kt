@@ -18,7 +18,7 @@ class BackupCodecTest {
         val settings = LauncherSettings(
             gridCols = 5,
             iconSizeDp = 72,
-            drawerSort = SortMode.LAUNCH,
+            drawerSort = SortMode.FREQUENT,
             widgetGlobalAlpha = 0.4f,
             darkTheme = "dark",
         )

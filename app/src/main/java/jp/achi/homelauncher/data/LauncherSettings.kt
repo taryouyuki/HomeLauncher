@@ -12,18 +12,36 @@ data class LauncherSettings(
     val iconAlpha: Float = 1f,
     val showLabels: Boolean = true,
     val labelSizeSp: Int = 11,
+    val lockLayout: Boolean = false,
+    /** 配置先に既存の項目がある場合の動作: overlap(被せる) / push_down(既存を下へ) / push_up(既存を上へ) */
+    val overlapPolicy: String = OVERLAP,
+    // ドック
     val showDock: Boolean = true,
     val dockCount: Int = 5,
-    val lockLayout: Boolean = false,
+    val dockHeightDp: Int = 72,
+    val dockIconAlpha: Float = 1f,
+    /** 最後のページからさらに進むと最初のページに戻る */
+    val dockLoop: Boolean = true,
+    // 検索バー・メディアバー(個別設定がなければこの不透明度)
+    val searchBarAlpha: Float = 0.92f,
+    val mediaBarAlpha: Float = 0.97f,
     // アプリ一覧
     val drawerCols: Int = 4,
     val drawerIconSizeDp: Int = 52,
     val drawerSort: SortMode = SortMode.NAME,
+    /** theme=テーマ色 / custom=好きな色 */
+    val drawerBgMode: String = "theme",
+    val drawerBgColor: Int = DEFAULT_DRAWER_COLOR,
+    val drawerBgAlpha: Float = 0.97f,
     // ウィジェット(全体設定。個別設定がある場合はそちらが優先)
     val widgetGlobalAlpha: Float = 1f,
     // 外観
     val useDynamicColor: Boolean = true,
     val darkTheme: String = "system", // system / light / dark
+    /** ホーム画面の色。system=アプリ全体と同じ / custom=好きな色 */
+    val homeColorMode: String = "system",
+    val homeColor: Int = DEFAULT_HOME_COLOR,
+    val homeDarkTheme: String = "light", // system / light / dark (homeColorMode=custom のとき)
     val scrimAlpha: Float = 0.25f,
     // 操作
     val haptics: Boolean = true,
@@ -37,15 +55,27 @@ data class LauncherSettings(
         put("iconAlpha", iconAlpha.toDouble())
         put("showLabels", showLabels)
         put("labelSizeSp", labelSizeSp)
+        put("lockLayout", lockLayout)
+        put("overlapPolicy", overlapPolicy)
         put("showDock", showDock)
         put("dockCount", dockCount)
-        put("lockLayout", lockLayout)
+        put("dockHeightDp", dockHeightDp)
+        put("dockIconAlpha", dockIconAlpha.toDouble())
+        put("dockLoop", dockLoop)
+        put("searchBarAlpha", searchBarAlpha.toDouble())
+        put("mediaBarAlpha", mediaBarAlpha.toDouble())
         put("drawerCols", drawerCols)
         put("drawerIconSizeDp", drawerIconSizeDp)
         put("drawerSort", drawerSort.name)
+        put("drawerBgMode", drawerBgMode)
+        put("drawerBgColor", drawerBgColor)
+        put("drawerBgAlpha", drawerBgAlpha.toDouble())
         put("widgetGlobalAlpha", widgetGlobalAlpha.toDouble())
         put("useDynamicColor", useDynamicColor)
         put("darkTheme", darkTheme)
+        put("homeColorMode", homeColorMode)
+        put("homeColor", homeColor)
+        put("homeDarkTheme", homeDarkTheme)
         put("scrimAlpha", scrimAlpha.toDouble())
         put("haptics", haptics)
         put("searchUrl", searchUrl)
@@ -53,31 +83,54 @@ data class LauncherSettings(
 
     companion object {
         const val DEFAULT_SEARCH_URL = "https://www.google.com/search?q=%s"
+        const val OVERLAP = "overlap"
+        const val PUSH_DOWN = "push_down"
+        const val PUSH_UP = "push_up"
+        val DEFAULT_HOME_COLOR: Int = 0xFFF48FB1.toInt()
+        val DEFAULT_DRAWER_COLOR: Int = 0xFFFFFFFF.toInt()
+
+        private fun JSONObject.alpha(key: String, def: Float, min: Float = 0f): Float =
+            optDouble(key, def.toDouble()).toFloat().coerceIn(min, 1f)
+
+        private fun oneOf(value: String, allowed: Set<String>, def: String) = if (value in allowed) value else def
 
         /** 欠けている項目は既定値、範囲外の値は範囲内に丸めて読み込む。 */
         fun fromJson(o: JSONObject): LauncherSettings {
             val d = LauncherSettings()
             val url = o.optString("searchUrl", d.searchUrl)
-            val theme = o.optString("darkTheme", d.darkTheme)
+            val themes = setOf("system", "light", "dark")
+            val sortName = o.optString("drawerSort", d.drawerSort.name)
             return LauncherSettings(
                 gridCols = o.optInt("gridCols", d.gridCols).coerceIn(3, 8),
                 gridRows = o.optInt("gridRows", d.gridRows).coerceIn(3, 10),
                 pageCount = o.optInt("pageCount", d.pageCount).coerceIn(1, 8),
                 iconSizeDp = o.optInt("iconSizeDp", d.iconSizeDp).coerceIn(32, 96),
-                iconAlpha = o.optDouble("iconAlpha", d.iconAlpha.toDouble()).toFloat().coerceIn(0.1f, 1f),
+                iconAlpha = o.alpha("iconAlpha", d.iconAlpha, 0.1f),
                 showLabels = o.optBoolean("showLabels", d.showLabels),
                 labelSizeSp = o.optInt("labelSizeSp", d.labelSizeSp).coerceIn(8, 16),
+                lockLayout = o.optBoolean("lockLayout", d.lockLayout),
+                overlapPolicy = oneOf(o.optString("overlapPolicy", d.overlapPolicy), setOf(OVERLAP, PUSH_DOWN, PUSH_UP), d.overlapPolicy),
                 showDock = o.optBoolean("showDock", d.showDock),
                 dockCount = o.optInt("dockCount", d.dockCount).coerceIn(3, 7),
-                lockLayout = o.optBoolean("lockLayout", d.lockLayout),
+                dockHeightDp = o.optInt("dockHeightDp", d.dockHeightDp).coerceIn(48, 160),
+                dockIconAlpha = o.alpha("dockIconAlpha", d.dockIconAlpha, 0.1f),
+                dockLoop = o.optBoolean("dockLoop", d.dockLoop),
+                searchBarAlpha = o.alpha("searchBarAlpha", d.searchBarAlpha, 0.1f),
+                mediaBarAlpha = o.alpha("mediaBarAlpha", d.mediaBarAlpha, 0.1f),
                 drawerCols = o.optInt("drawerCols", d.drawerCols).coerceIn(3, 7),
                 drawerIconSizeDp = o.optInt("drawerIconSizeDp", d.drawerIconSizeDp).coerceIn(32, 96),
-                drawerSort = runCatching { SortMode.valueOf(o.optString("drawerSort", d.drawerSort.name)) }
-                    .getOrDefault(d.drawerSort),
-                widgetGlobalAlpha = o.optDouble("widgetGlobalAlpha", d.widgetGlobalAlpha.toDouble())
-                    .toFloat().coerceIn(0f, 1f),
+                // 旧バージョンの "LAUNCH" は「よく使う順」に読み替える
+                drawerSort = if (sortName == "LAUNCH") SortMode.FREQUENT
+                else runCatching { SortMode.valueOf(sortName) }.getOrDefault(d.drawerSort),
+                drawerBgMode = oneOf(o.optString("drawerBgMode", d.drawerBgMode), setOf("theme", "custom"), d.drawerBgMode),
+                drawerBgColor = o.optInt("drawerBgColor", d.drawerBgColor),
+                drawerBgAlpha = o.alpha("drawerBgAlpha", d.drawerBgAlpha, 0.3f),
+                widgetGlobalAlpha = o.alpha("widgetGlobalAlpha", d.widgetGlobalAlpha),
                 useDynamicColor = o.optBoolean("useDynamicColor", d.useDynamicColor),
-                darkTheme = if (theme in setOf("system", "light", "dark")) theme else d.darkTheme,
+                darkTheme = oneOf(o.optString("darkTheme", d.darkTheme), themes, d.darkTheme),
+                homeColorMode = oneOf(o.optString("homeColorMode", d.homeColorMode), setOf("system", "custom"), d.homeColorMode),
+                homeColor = o.optInt("homeColor", d.homeColor),
+                homeDarkTheme = oneOf(o.optString("homeDarkTheme", d.homeDarkTheme), themes, d.homeDarkTheme),
                 scrimAlpha = o.optDouble("scrimAlpha", d.scrimAlpha.toDouble()).toFloat().coerceIn(0f, 0.8f),
                 haptics = o.optBoolean("haptics", d.haptics),
                 searchUrl = if (url.startsWith("http") && url.contains("%s")) url else d.searchUrl,

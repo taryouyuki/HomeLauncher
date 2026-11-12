@@ -102,6 +102,7 @@ fun AppCell(
     onLongClick: () -> Unit,
     iconAlpha: Float = 1f,
     subLabel: String? = null,
+    labelColor: Color? = null,
 ) {
     Column(
         modifier = modifier
@@ -112,7 +113,7 @@ fun AppCell(
     ) {
         AppIcon(app, iconSizeDp, Modifier.alpha(iconAlpha))
         if (showLabel) {
-            val color = if (onWallpaper) Color.White else MaterialTheme.colorScheme.onSurface
+            val color = labelColor ?: if (onWallpaper) Color.White else MaterialTheme.colorScheme.onSurface
             val shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null
             Text(
                 text = app.label,

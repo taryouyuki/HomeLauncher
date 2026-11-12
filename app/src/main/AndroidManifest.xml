@@ -36,6 +36,19 @@
             </intent-filter>
         </activity>
 
+        <!-- ブラウザ等の「ホーム画面に追加」(ピン留めショートカット)の受け口 -->
+        <activity
+            android:name=".PinShortcutActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- メディア操作用: 通知アクセスを許可するとアクティブなメディアセッションを参照できる -->
         <service
             android:name=".media.MediaListenerService"

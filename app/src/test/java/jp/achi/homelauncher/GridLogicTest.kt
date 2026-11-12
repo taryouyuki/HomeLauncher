@@ -53,4 +53,38 @@ class GridLogicTest {
         assertEquals(0, c.x)
         assertEquals(0, c.y)
     }
+
+    @Test
+    fun placeWithOverlapPolicyKeepsBothAndReportsCollision() {
+        val a = app(0, 1, 1)
+        val mover = app(0, 1, 1)
+        val (r, hit) = GridLogic.placeWithPolicy(listOf(a), mover, "overlap", 4)
+        assertTrue(hit)
+        assertEquals(2, r.size)
+        assertEquals(mover.id, r.last().id)
+    }
+
+    @Test
+    fun placeWithPushDownMovesExistingBelow() {
+        val a = app(0, 1, 1)
+        val mover = app(0, 1, 1)
+        val (r, hit) = GridLogic.placeWithPolicy(listOf(a), mover, "push_down", 4)
+        assertTrue(hit)
+        assertEquals(2, r.first { it.id == a.id }.y)
+        assertEquals(1, r.first { it.id == mover.id }.y)
+    }
+
+    @Test
+    fun placeWithPushUpMovesExistingAbove() {
+        val a = app(0, 1, 2)
+        val mover = app(0, 1, 2)
+        val (r, _) = GridLogic.placeWithPolicy(listOf(a), mover, "push_up", 4)
+        assertEquals(1, r.first { it.id == a.id }.y)
+    }
+
+    @Test
+    fun placeWithoutCollisionReportsFalse() {
+        val (_, hit) = GridLogic.placeWithPolicy(listOf(app(0, 0, 0)), app(0, 2, 2), "push_down", 4)
+        assertFalse(hit)
+    }
 }
