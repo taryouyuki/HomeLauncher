@@ -35,6 +35,12 @@ class GridLogicTest {
     }
 
     @Test
+    fun stackChildrenDoNotOccupyCells() {
+        val child = HomeItem(type = HomeItem.WIDGET, page = 0, x = 0, y = 0, parent = "stack")
+        assertTrue(GridLogic.isFree(listOf(child), 0, 0, 0, 1, 1))
+    }
+
+    @Test
     fun oversizedWidgetNeverFits() {
         assertNull(GridLogic.findFreeCell(emptyList(), 1, 4, 4, 5, 1))
     }

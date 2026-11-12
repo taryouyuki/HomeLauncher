@@ -32,6 +32,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
@@ -99,6 +100,8 @@ fun AppCell(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    iconAlpha: Float = 1f,
+    subLabel: String? = null,
 ) {
     Column(
         modifier = modifier
@@ -107,7 +110,7 @@ fun AppCell(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        AppIcon(app, iconSizeDp)
+        AppIcon(app, iconSizeDp, Modifier.alpha(iconAlpha))
         if (showLabel) {
             val color = if (onWallpaper) Color.White else MaterialTheme.colorScheme.onSurface
             val shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null
@@ -120,6 +123,14 @@ fun AppCell(
                 textAlign = TextAlign.Center,
                 style = TextStyle(shadow = shadow),
                 modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        if (subLabel != null) {
+            Text(
+                text = subLabel,
+                color = if (onWallpaper) Color.White else MaterialTheme.colorScheme.outline,
+                fontSize = (labelSizeSp - 2).coerceAtLeast(8).sp,
+                maxLines = 1,
             )
         }
     }

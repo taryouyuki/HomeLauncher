@@ -31,6 +31,21 @@ class LauncherPrefs(context: Context) {
         sp.edit().putString(KEY_DOCK, LayoutJson.stringsToJson(dock).toString()).apply()
     }
 
+    fun loadFolders(): List<Folder> =
+        runCatching { Folder.listFromJson(JSONArray(sp.getString(KEY_FOLDERS, "[]"))) }
+            .getOrDefault(emptyList())
+
+    fun saveFolders(list: List<Folder>) {
+        sp.edit().putString(KEY_FOLDERS, Folder.listToJson(list).toString()).apply()
+    }
+
+    /** 検索バー/メディアバーをグリッド項目にした新レイアウトへの移行が済んだか。 */
+    var layoutV2Done: Boolean
+        get() = sp.getBoolean(KEY_LAYOUT_V2, false)
+        set(v) {
+            sp.edit().putBoolean(KEY_LAYOUT_V2, v).apply()
+        }
+
     fun loadCounts(): Map<String, Int> =
         runCatching { LayoutJson.countsFromJson(JSONObject(sp.getString(KEY_COUNTS, "{}"))) }
             .getOrDefault(emptyMap())
@@ -53,5 +68,7 @@ class LauncherPrefs(context: Context) {
         const val KEY_PENDING = "pending_widgets"
         const val KEY_DOCK = "dock"
         const val KEY_COUNTS = "launch_counts"
+        const val KEY_FOLDERS = "folders"
+        const val KEY_LAYOUT_V2 = "layout_v2_done"
     }
 }

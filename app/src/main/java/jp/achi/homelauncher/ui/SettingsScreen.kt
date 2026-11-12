@@ -126,12 +126,11 @@ fun SettingsScreen(
                 IntSliderRow("行数", s.gridRows, 3, 10) { v -> update { it.copy(gridRows = v) } }
                 IntSliderRow("ページ数", s.pageCount, 1, 8) { v -> update { it.copy(pageCount = v) } }
                 IntSliderRow("アイコンサイズ", s.iconSizeDp, 32, 96, "dp") { v -> update { it.copy(iconSizeDp = v) } }
+                PercentSliderRow("アイコンの不透明度", s.iconAlpha, 0.1f, 1f) { v -> update { it.copy(iconAlpha = v) } }
                 SwitchRow("アプリ名を表示", s.showLabels) { v -> update { it.copy(showLabels = v) } }
                 IntSliderRow("アプリ名の文字サイズ", s.labelSizeSp, 8, 16, "sp") { v -> update { it.copy(labelSizeSp = v) } }
-                SwitchRow("検索バーを表示", s.showSearchBar) { v -> update { it.copy(showSearchBar = v) } }
-                SwitchRow("メディア操作パネルを表示", s.showMediaPanel) { v -> update { it.copy(showMediaPanel = v) } }
                 SwitchRow("ドックを表示", s.showDock) { v -> update { it.copy(showDock = v) } }
-                IntSliderRow("ドックのアイコン数", s.dockCount, 3, 7) { v -> update { it.copy(dockCount = v) } }
+                IntSliderRow("ドック1ページのアイコン数", s.dockCount, 3, 7) { v -> update { it.copy(dockCount = v) } }
                 SwitchRow("レイアウトをロック(長押し編集を無効化)", s.lockLayout) { v -> update { it.copy(lockLayout = v) } }
 
                 Section("アプリ一覧")

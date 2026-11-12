@@ -53,6 +53,10 @@ data class HomeItem(
     val provider: String = "",
     /** ウィジェット個別の透明度。負の値なら全体設定を使う。 */
     val alpha: Float = -1f,
+    /** FOLDER: フォルダID */
+    val ref: String = "",
+    /** ウィジェットスタックの子なら、親STACKのitem id。空ならホーム直置き。 */
+    val parent: String = "",
 ) {
     val appKey: String get() = "$pkg/$cls"
 
@@ -69,15 +73,22 @@ data class HomeItem(
         put("widgetId", widgetId)
         put("provider", provider)
         put("alpha", alpha.toDouble())
+        put("ref", ref)
+        put("parent", parent)
     }
 
     companion object {
         const val APP = "app"
         const val WIDGET = "widget"
+        const val FOLDER = "folder"
+        const val STACK = "stack"
+        const val SEARCH = "search"
+        const val MEDIA = "media"
+        private val TYPES = setOf(APP, WIDGET, FOLDER, STACK, SEARCH, MEDIA)
 
         fun fromJson(o: JSONObject): HomeItem {
             val type = o.getString("type")
-            require(type == APP || type == WIDGET) { "unknown item type: $type" }
+            require(type in TYPES) { "unknown item type: $type" }
             return HomeItem(
                 id = o.optString("id").ifEmpty { UUID.randomUUID().toString() },
                 type = type,
@@ -91,6 +102,8 @@ data class HomeItem(
                 widgetId = o.optInt("widgetId", -1),
                 provider = o.optString("provider"),
                 alpha = o.optDouble("alpha", -1.0).toFloat(),
+                ref = o.optString("ref"),
+                parent = o.optString("parent"),
             )
         }
     }
@@ -138,7 +151,7 @@ object GridLogic {
         a.x < x + sx && x < a.x + a.spanX && a.y < y + sy && y < a.y + a.spanY
 
     fun isFree(items: List<HomeItem>, page: Int, x: Int, y: Int, sx: Int, sy: Int): Boolean =
-        items.none { it.page == page && overlaps(it, x, y, sx, sy) }
+        items.none { it.parent.isEmpty() && it.page == page && overlaps(it, x, y, sx, sy) }
 
     /** 空きセルを探す。見つからなければ null。戻り値は Triple(page, x, y)。 */
     fun findFreeCell(
@@ -171,4 +184,41 @@ object GridLogic {
             y = item.y.coerceIn(0, rows - sy),
         )
     }
+}
+
+/** アプリフォルダ。ホーム画面(HomeItem.FOLDER)とドックの両方から参照される。 */
+data class Folder(
+    val id: String = UUID.randomUUID().toString(),
+    val name: String,
+    val apps: List<String> = emptyList(),
+) {
+    fun toJson(): JSONObject = JSONObject().apply {
+        put("id", id)
+        put("name", name)
+        put("apps", LayoutJson.stringsToJson(apps))
+    }
+
+    companion object {
+        fun fromJson(o: JSONObject): Folder = Folder(
+            id = o.optString("id").ifEmpty { UUID.randomUUID().toString() },
+            name = o.optString("name").ifEmpty { "フォルダ" },
+            apps = LayoutJson.stringsFromJson(o.optJSONArray("apps")),
+        )
+
+        fun listToJson(list: List<Folder>): JSONArray = JSONArray().also { arr -> list.forEach { arr.put(it.toJson()) } }
+
+        fun listFromJson(arr: JSONArray?): List<Folder> = buildList {
+            if (arr == null) return@buildList
+            for (i in 0 until arr.length()) {
+                runCatching { Folder.fromJson(arr.getJSONObject(i)) }.getOrNull()?.let { add(it) }
+            }
+        }
+    }
+}
+
+/** ドックの項目は、アプリなら "pkg/cls"、フォルダなら "folder:<id>"。 */
+object DockEntry {
+    private const val FOLDER_PREFIX = "folder:"
+    fun folder(id: String): String = FOLDER_PREFIX + id
+    fun folderId(entry: String): String? = if (entry.startsWith(FOLDER_PREFIX)) entry.removePrefix(FOLDER_PREFIX) else null
 }

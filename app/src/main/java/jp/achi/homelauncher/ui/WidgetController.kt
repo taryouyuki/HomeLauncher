@@ -43,6 +43,13 @@ class WidgetController(context: Context) {
         runCatching { info.loadLabel(appContext.packageManager) }.getOrNull().orEmpty()
             .ifEmpty { info.provider.packageName }
 
+    /** ウィジェットを提供するアプリ自体の名前(アプリ名での検索用)。 */
+    fun appLabelOf(info: AppWidgetProviderInfo): String = runCatching {
+        val pm = appContext.packageManager
+        @Suppress("DEPRECATION")
+        pm.getApplicationLabel(pm.getApplicationInfo(info.provider.packageName, 0)).toString()
+    }.getOrNull().orEmpty().ifEmpty { info.provider.packageName }
+
     fun delete(widgetId: Int) {
         runCatching { host.deleteAppWidgetId(widgetId) }
     }

@@ -1,13 +1,19 @@
+@file:OptIn(ExperimentalFoundationApi::class)
+
 package jp.achi.homelauncher.ui
 
-import android.appwidget.AppWidgetHostView
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Intent
-import android.view.View
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -16,7 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -36,11 +42,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,30 +56,36 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.achi.homelauncher.LauncherViewModel
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppSorter
+import jp.achi.homelauncher.data.DockEntry
+import jp.achi.homelauncher.data.Folder
 import jp.achi.homelauncher.data.GridLogic
 import jp.achi.homelauncher.data.HomeItem
 import jp.achi.homelauncher.data.LauncherSettings
@@ -80,6 +93,23 @@ import jp.achi.homelauncher.data.SortMode
 import jp.achi.homelauncher.media.MediaHelper
 import kotlin.math.ceil
 import kotlin.math.min
+import kotlin.math.roundToInt
+
+/** グリッド上の項目を描画するのに必要な共有状態。 */
+private class HomeEnv(
+    val settings: LauncherSettings,
+    val appMap: Map<String, AppInfo>,
+    val folders: List<Folder>,
+    val items: List<HomeItem>,
+    val widgets: WidgetController,
+    val mediaState: MediaHelper.State,
+    val media: MediaHelper,
+    val onSelect: (String) -> Unit,
+    val onLaunch: (AppInfo) -> Unit,
+    val onOpenFolder: (String) -> Unit,
+    val onOpenSearch: () -> Unit,
+    val onRequestNotificationAccess: () -> Unit,
+)
 
 @Composable
 fun HomeScreen(
@@ -97,44 +127,77 @@ fun HomeScreen(
 
     val settings by vm.settings.collectAsStateWithLifecycle()
     val items by vm.items.collectAsStateWithLifecycle()
+    val folders by vm.folders.collectAsStateWithLifecycle()
     val dock by vm.dock.collectAsStateWithLifecycle()
     val apps by vm.apps.collectAsStateWithLifecycle()
     val pending by vm.pendingRebind.collectAsStateWithLifecycle()
     val mediaState by media.state.collectAsStateWithLifecycle()
     val appMap = remember(apps) { apps.associateBy { it.key } }
 
-    var query by remember { mutableStateOf("") }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    var searchOpen by remember { mutableStateOf(false) }
     var emptyMenu by remember { mutableStateOf(false) }
-    var itemMenu by remember { mutableStateOf<HomeItem?>(null) }
     var editItem by remember { mutableStateOf<HomeItem?>(null) }
     var showWidgetPicker by remember { mutableStateOf(false) }
+    /** ウィジェット追加先。空文字ならホーム直置き、それ以外はスタックの item id。 */
+    var widgetTarget by remember { mutableStateOf("") }
     var showAppPicker by remember { mutableStateOf(false) }
-    var dockPickerIndex by remember { mutableStateOf<Int?>(null) }
-    var dockMenuKey by remember { mutableStateOf<String?>(null) }
+    var openFolderId by remember { mutableStateOf<String?>(null) }
+    var folderPickItem by remember { mutableStateOf<HomeItem?>(null) }
+    /** フォルダ作成先。-1 ならホーム、0以上ならドックの位置。null は非表示。 */
+    var newFolderAt by remember { mutableStateOf<Int?>(null) }
+    var stackManageId by remember { mutableStateOf<String?>(null) }
+    var dockEmptyIndex by remember { mutableStateOf<Int?>(null) }
+    var dockAppPickIndex by remember { mutableStateOf<Int?>(null) }
+    var dockMenuIndex by remember { mutableStateOf<Int?>(null) }
     var cellDp by remember { mutableStateOf(80f to 80f) }
 
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { settings.pageCount })
+    val pagerState = rememberPagerState(pageCount = { settings.pageCount })
+    val selectedItem = items.firstOrNull { it.id == selectedId }
 
     LaunchedEffect(resetSignal) {
-        // ホームボタンで戻ってきたら検索・メニューを閉じて1ページ目へ
-        query = ""
+        // ホームボタンで戻ってきたら、検索・編集モード・メニューを閉じて1ページ目へ
+        searchOpen = false
+        selectedId = null
         emptyMenu = false
-        itemMenu = null
+        openFolderId = null
         pagerState.scrollToPage(0)
     }
+
+    BackHandler(enabled = searchOpen) { searchOpen = false }
+    BackHandler(enabled = selectedId != null && !searchOpen) { selectedId = null }
 
     fun buzz() {
         if (settings.haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
     }
 
+    fun select(id: String) {
+        if (vm.settings.value.lockLayout) return
+        buzz()
+        selectedId = id
+    }
+
+    fun launchApp(app: AppInfo) {
+        vm.launch(context, app)
+    }
+
     /** ウィジェット追加。結果はアクティビティ結果経由で非同期に返る。 */
-    fun addWidget(info: AppWidgetProviderInfo) {
+    fun addWidget(info: AppWidgetProviderInfo, parent: String) {
         val activity = context.findActivity()
         if (activity == null) {
             toast(context, "ウィジェットを追加できません")
             return
         }
         widgets.add(activity, info) { id, inf ->
+            if (parent.isNotEmpty()) {
+                vm.addWidget(
+                    HomeItem(
+                        type = HomeItem.WIDGET, page = 0, x = 0, y = 0,
+                        widgetId = id, provider = inf.provider.flattenToString(), parent = parent,
+                    ),
+                )
+                return@add
+            }
             val s = vm.settings.value
             val d = density.density
             val sx = ceil((inf.minWidth / d) / cellDp.first).toInt().coerceIn(1, s.gridCols)
@@ -146,26 +209,46 @@ fun HomeScreen(
             } else {
                 vm.addWidget(
                     HomeItem(
-                        type = HomeItem.WIDGET,
-                        page = cell.first,
-                        x = cell.second,
-                        y = cell.third,
-                        spanX = sx,
-                        spanY = sy,
-                        widgetId = id,
-                        provider = inf.provider.flattenToString(),
+                        type = HomeItem.WIDGET, page = cell.first, x = cell.second, y = cell.third,
+                        spanX = sx, spanY = sy, widgetId = id, provider = inf.provider.flattenToString(),
                     ),
                 )
             }
         }
     }
 
+    fun deleteItem(item: HomeItem) {
+        selectedId = null
+        if (item.type == HomeItem.FOLDER) {
+            vm.deleteFolder(item.ref)
+            return
+        }
+        vm.removeItem(item.id)
+            .filter { it.type == HomeItem.WIDGET && it.widgetId >= 0 }
+            .forEach { widgets.delete(it.widgetId) }
+    }
+
+    val env = HomeEnv(
+        settings = settings,
+        appMap = appMap,
+        folders = folders,
+        items = items,
+        widgets = widgets,
+        mediaState = mediaState,
+        media = media,
+        onSelect = { select(it) },
+        onLaunch = { launchApp(it) },
+        onOpenFolder = { openFolderId = it },
+        onOpenSearch = { searchOpen = true },
+        onRequestNotificationAccess = onRequestNotificationAccess,
+    )
+
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black.copy(alpha = settings.scrimAlpha))
             .pointerInput(Unit) {
-                // 下から上へのスワイプでアプリ一覧
+                // 下から上へのスワイプでアプリ一覧(編集中のドラッグは子が消費するので反応しない)
                 var total = 0f
                 detectVerticalDragGestures(
                     onDragStart = { total = 0f },
@@ -175,214 +258,185 @@ fun HomeScreen(
             },
     ) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
-            if (settings.showSearchBar) {
-                HomeSearchBar(
-                    query = query,
-                    onQueryChange = { query = it },
-                    onSubmit = { openWebSearch(context, settings.searchUrl, query) },
-                )
-            }
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val cols = settings.gridCols
+                val rows = settings.gridRows
+                val cellW = maxWidth / cols
+                val cellH = maxHeight / rows
+                val cellWpx = with(density) { cellW.toPx() }
+                val cellHpx = with(density) { cellH.toPx() }
+                LaunchedEffect(cellW, cellH) { cellDp = cellW.value to cellH.value }
 
-            if (query.isNotBlank()) {
-                SearchResults(
-                    query = query,
-                    apps = apps,
-                    onLaunch = {
-                        vm.launch(context, it)
-                        query = ""
-                    },
-                    onWeb = { openWebSearch(context, settings.searchUrl, query) },
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                if (settings.showMediaPanel) {
-                    MediaPanel(mediaState, media, onRequestNotificationAccess)
-                }
-
-                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
-                    val cols = settings.gridCols
-                    val rows = settings.gridRows
-                    val cellW = maxWidth / cols
-                    val cellH = maxHeight / rows
-                    LaunchedEffect(cellW, cellH) { cellDp = cellW.value to cellH.value }
-
-                    HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
-                        Box(
-                            Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    detectTapGestures(onLongPress = {
+                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                    val shown = items
+                        .filter { it.page == page && it.parent.isEmpty() }
+                        .map { GridLogic.clamp(it, cols, rows) }
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = { selectedId = null },
+                                    onLongPress = {
                                         if (!vm.settings.value.lockLayout) {
                                             buzz()
+                                            selectedId = null
                                             emptyMenu = true
                                         }
-                                    })
-                                },
-                        ) {
-                            for (raw in items) {
-                                if (raw.page != page) continue
-                                val item = GridLogic.clamp(raw, cols, rows)
-                                key(item.id) {
-                                    Box(
-                                        Modifier
-                                            .offset(cellW * item.x, cellH * item.y)
-                                            .size(cellW * item.spanX, cellH * item.spanY),
-                                    ) {
-                                        if (item.type == HomeItem.APP) {
-                                            val app = appMap[item.appKey]
-                                            if (app != null) {
-                                                AppCell(
-                                                    app = app,
-                                                    iconSizeDp = min(settings.iconSizeDp, (cellW.value - 8f).toInt()).coerceAtLeast(24),
-                                                    showLabel = settings.showLabels,
-                                                    labelSizeSp = settings.labelSizeSp,
-                                                    onWallpaper = true,
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    onClick = { vm.launch(context, app) },
-                                                    onLongClick = {
-                                                        if (!settings.lockLayout) {
-                                                            buzz()
-                                                            itemMenu = item
-                                                        }
-                                                    },
-                                                )
-                                            }
-                                        } else {
-                                            WidgetBox(
-                                                item = item,
-                                                widgets = widgets,
-                                                alphaValue = if (item.alpha >= 0f) item.alpha else settings.widgetGlobalAlpha,
-                                                widthDp = (cellW * item.spanX).value.toInt(),
-                                                heightDp = (cellH * item.spanY).value.toInt(),
-                                                showHandle = !settings.lockLayout,
-                                                onHandle = {
-                                                    buzz()
-                                                    itemMenu = item
-                                                },
-                                            )
-                                        }
-                                    }
+                                    },
+                                )
+                            },
+                    ) {
+                        for (item in shown) {
+                            key(item.id) { GridItem(item, env, cellW, cellH) }
+                        }
+                        val sel = shown.firstOrNull { it.id == selectedId }
+                        if (sel != null) {
+                            EditFrame(sel, cellWpx, cellHpx, cols, rows) { nx, ny, nsx, nsy ->
+                                val others = items.filter { it.id != sel.id }
+                                if (GridLogic.isFree(others, sel.page, nx, ny, nsx, nsy)) {
+                                    vm.updateItem(sel.id) { it.copy(x = nx, y = ny, spanX = nsx, spanY = nsy) }
+                                } else {
+                                    toast(context, "他のアイコン・ウィジェットと重なります")
                                 }
                             }
                         }
                     }
                 }
-
-                if (settings.pageCount > 1) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        repeat(settings.pageCount) { i ->
-                            Box(
-                                Modifier
-                                    .padding(3.dp)
-                                    .size(if (i == pagerState.currentPage) 8.dp else 6.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White.copy(alpha = if (i == pagerState.currentPage) 0.95f else 0.45f)),
-                            )
-                        }
-                    }
-                }
             }
 
-            if (settings.showDock && query.isBlank()) {
-                Row(
+            if (settings.pageCount > 1) {
+                PageDots(count = settings.pageCount, current = pagerState.currentPage)
+            }
+
+            if (settings.showDock) {
+                val perPage = settings.dockCount
+                val dockPages = (dock.size + perPage) / perPage // ceil((size + 1) / perPage)
+                val dockPager = rememberPagerState(pageCount = { dockPages })
+                Column(
                     Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp, vertical = 6.dp)
                         .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.55f), RoundedCornerShape(28.dp))
-                        .padding(8.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
+                        .padding(vertical = 8.dp),
                 ) {
-                    for (i in 0 until settings.dockCount) {
-                        val dockKey = dock.getOrNull(i)
-                        val app = dockKey?.let { appMap[it] }
-                        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                            if (app != null) {
-                                AppCell(
-                                    app = app,
-                                    iconSizeDp = settings.iconSizeDp,
-                                    showLabel = false,
-                                    labelSizeSp = settings.labelSizeSp,
-                                    onWallpaper = false,
-                                    onClick = { vm.launch(context, app) },
-                                    onLongClick = {
-                                        if (!settings.lockLayout) {
-                                            buzz()
-                                            dockMenuKey = dockKey
-                                        }
-                                    },
-                                )
-                            } else {
-                                Box(
-                                    Modifier
-                                        .size(settings.iconSizeDp.dp)
-                                        .clip(CircleShape)
-                                        .clickable(enabled = !settings.lockLayout) { dockPickerIndex = i },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text("+", color = MaterialTheme.colorScheme.onSurface)
+                    HorizontalPager(
+                        state = dockPager,
+                        modifier = Modifier.fillMaxWidth().height((settings.iconSizeDp + 8).dp),
+                    ) { p ->
+                        Row(
+                            Modifier.fillMaxSize(),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            for (i in 0 until perPage) {
+                                val idx = p * perPage + i
+                                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                    DockSlot(
+                                        entry = dock.getOrNull(idx),
+                                        env = env,
+                                        onEmpty = { if (!settings.lockLayout) dockEmptyIndex = idx },
+                                        onLong = {
+                                            if (!settings.lockLayout) {
+                                                buzz()
+                                                dockMenuIndex = idx
+                                            }
+                                        },
+                                    )
                                 }
                             }
                         }
                     }
+                    if (dockPages > 1) {
+                        PageDots(count = dockPages, current = dockPager.currentPage)
+                    }
                 }
             }
+        }
+
+        // 編集モードの操作バー
+        if (selectedItem != null) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(top = 8.dp, start = 8.dp, end = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp)) {
+                    TextButton(onClick = { editItem = selectedItem }) { Text("詳細") }
+                    if (selectedItem.type == HomeItem.APP) {
+                        TextButton(onClick = { folderPickItem = selectedItem }) { Text("フォルダへ") }
+                    }
+                    if (selectedItem.type == HomeItem.STACK) {
+                        TextButton(onClick = { stackManageId = selectedItem.id }) { Text("スタック管理") }
+                    }
+                    TextButton(onClick = { deleteItem(selectedItem) }) { Text("削除") }
+                    TextButton(onClick = { selectedId = null }) { Text("完了") }
+                }
+            }
+        }
+
+        if (searchOpen) {
+            SearchOverlay(
+                apps = apps,
+                searchUrl = settings.searchUrl,
+                onLaunch = {
+                    searchOpen = false
+                    launchApp(it)
+                },
+                onClose = { searchOpen = false },
+            )
         }
     }
 
     // ---- メニュー・ダイアログ ----
     if (emptyMenu) {
-        MenuDialog(
-            title = "ホーム画面",
-            entries = listOf(
-                "ウィジェットを追加" to {
+        val entries = buildList<Pair<String, () -> Unit>> {
+            add("ウィジェットを追加" to {
+                emptyMenu = false
+                widgetTarget = ""
+                showWidgetPicker = true
+            })
+            add("ウィジェットスタックを作成" to {
+                emptyMenu = false
+                if (!vm.createStack()) toast(context, "ホーム画面に空きがありません")
+            })
+            add("アプリをホームに追加" to {
+                emptyMenu = false
+                showAppPicker = true
+            })
+            add("フォルダを作成" to {
+                emptyMenu = false
+                newFolderAt = -1
+            })
+            if (items.none { it.type == HomeItem.SEARCH }) {
+                add("検索バーを追加" to {
                     emptyMenu = false
-                    showWidgetPicker = true
-                },
-                "アプリをホームに追加" to {
+                    if (!vm.addSpecial(HomeItem.SEARCH)) toast(context, "ホーム画面に空きがありません")
+                })
+            }
+            if (items.none { it.type == HomeItem.MEDIA }) {
+                add("メディアバーを追加" to {
                     emptyMenu = false
-                    showAppPicker = true
-                },
-                "壁紙を変更" to {
-                    emptyMenu = false
-                    runCatching {
-                        context.startActivity(
-                            Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "壁紙を変更")
-                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    }.onFailure { toast(context, "壁紙設定を開けません") }
-                },
-                "ランチャー設定" to {
-                    emptyMenu = false
-                    onOpenSettings()
-                },
-            ),
-            onDismiss = { emptyMenu = false },
-        )
-    }
-
-    itemMenu?.let { item ->
-        val title = if (item.type == HomeItem.WIDGET) "ウィジェット" else appMap[item.appKey]?.label ?: "アプリ"
-        MenuDialog(
-            title = title,
-            entries = listOf(
-                (if (item.type == HomeItem.WIDGET) "サイズ・透明度・位置を編集" else "位置を編集") to {
-                    itemMenu = null
-                    editItem = item
-                },
-                "ホームから削除" to {
-                    itemMenu = null
-                    val removed = vm.removeItem(item.id)
-                    if (removed != null && removed.type == HomeItem.WIDGET && removed.widgetId >= 0) {
-                        widgets.delete(removed.widgetId)
-                    }
-                },
-            ),
-            onDismiss = { itemMenu = null },
-        )
+                    if (!vm.addSpecial(HomeItem.MEDIA)) toast(context, "ホーム画面に空きがありません")
+                })
+            }
+            add("壁紙を変更" to {
+                emptyMenu = false
+                runCatching {
+                    context.startActivity(
+                        Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "壁紙を変更")
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }.onFailure { toast(context, "壁紙設定を開けません") }
+            })
+            add("ランチャー設定" to {
+                emptyMenu = false
+                onOpenSettings()
+            })
+        }
+        MenuDialog(title = "ホーム画面", entries = entries, onDismiss = { emptyMenu = false })
     }
 
     editItem?.let { item ->
@@ -403,7 +457,7 @@ fun HomeScreen(
             widgets = widgets,
             onPick = {
                 showWidgetPicker = false
-                addWidget(it)
+                addWidget(it, widgetTarget)
             },
             onDismiss = { showWidgetPicker = false },
         )
@@ -420,28 +474,137 @@ fun HomeScreen(
         )
     }
 
-    dockPickerIndex?.let { index ->
-        AppPickerDialog(
-            apps = AppSorter.sort(apps, SortMode.NAME, emptyMap()),
-            onPick = {
-                dockPickerIndex = null
-                vm.setDockApp(index, it.key)
+    openFolderId?.let { fid ->
+        val folder = folders.firstOrNull { it.id == fid }
+        if (folder == null) {
+            openFolderId = null
+        } else {
+            FolderDialog(
+                folder = folder,
+                appMap = appMap,
+                allApps = apps,
+                iconSizeDp = settings.drawerIconSizeDp,
+                labelSizeSp = settings.labelSizeSp,
+                onLaunch = {
+                    openFolderId = null
+                    launchApp(it)
+                },
+                onPutOnHome = { app ->
+                    if (vm.addAppByKey(app.key)) vm.removeFromFolder(folder.id, app.key)
+                    else toast(context, "ホーム画面に空きがありません")
+                },
+                onRemoveFromFolder = { vm.removeFromFolder(folder.id, it.key) },
+                onAddApp = { vm.addToFolder(folder.id, it.key) },
+                onRename = { vm.renameFolder(folder.id, it) },
+                onDelete = {
+                    openFolderId = null
+                    vm.deleteFolder(folder.id)
+                },
+                onDismiss = { openFolderId = null },
+            )
+        }
+    }
+
+    folderPickItem?.let { item ->
+        FolderPickDialog(
+            folders = folders,
+            onPick = { f ->
+                folderPickItem = null
+                selectedId = null
+                vm.moveHomeAppToFolder(item.id, f.id)
             },
-            onDismiss = { dockPickerIndex = null },
+            onDismiss = { folderPickItem = null },
         )
     }
 
-    dockMenuKey?.let { k ->
+    newFolderAt?.let { at ->
+        TextInputDialog(
+            title = "フォルダ名",
+            initial = "",
+            onConfirm = { name ->
+                newFolderAt = null
+                val created = vm.createFolder(name, if (at >= 0) at else null)
+                if (created == null) toast(context, "ホーム画面に空きがありません")
+            },
+            onDismiss = { newFolderAt = null },
+        )
+    }
+
+    stackManageId?.let { sid ->
+        val children = items.filter { it.parent == sid }
+        StackManageDialog(
+            children = children,
+            widgets = widgets,
+            onAdd = {
+                stackManageId = null
+                widgetTarget = sid
+                showWidgetPicker = true
+            },
+            onRemove = { child ->
+                vm.removeItem(child.id).forEach { if (it.widgetId >= 0) widgets.delete(it.widgetId) }
+            },
+            onDismiss = { stackManageId = null },
+        )
+    }
+
+    dockEmptyIndex?.let { idx ->
         MenuDialog(
-            title = appMap[k]?.label ?: "ドック",
+            title = "ドック",
             entries = listOf(
-                "ドックから削除" to {
-                    dockMenuKey = null
-                    vm.removeDockApp(k)
+                "アプリを追加" to {
+                    dockEmptyIndex = null
+                    dockAppPickIndex = idx
+                },
+                "フォルダを作成" to {
+                    dockEmptyIndex = null
+                    newFolderAt = idx
                 },
             ),
-            onDismiss = { dockMenuKey = null },
+            onDismiss = { dockEmptyIndex = null },
         )
+    }
+
+    dockAppPickIndex?.let { idx ->
+        AppPickerDialog(
+            apps = AppSorter.sort(apps, SortMode.NAME, emptyMap()),
+            onPick = {
+                dockAppPickIndex = null
+                vm.setDockEntry(idx, it.key)
+            },
+            onDismiss = { dockAppPickIndex = null },
+        )
+    }
+
+    dockMenuIndex?.let { idx ->
+        val entry = dock.getOrNull(idx)
+        if (entry == null) {
+            dockMenuIndex = null
+        } else {
+            val folderId = DockEntry.folderId(entry)
+            MenuDialog(
+                title = if (folderId != null) folders.firstOrNull { it.id == folderId }?.name ?: "フォルダ" else appMap[entry]?.label ?: "ドック",
+                entries = if (folderId != null) {
+                    listOf(
+                        "フォルダを開く" to {
+                            dockMenuIndex = null
+                            openFolderId = folderId
+                        },
+                        "フォルダを削除" to {
+                            dockMenuIndex = null
+                            vm.deleteFolder(folderId)
+                        },
+                    )
+                } else {
+                    listOf(
+                        "ドックから外す" to {
+                            dockMenuIndex = null
+                            vm.removeDockEntry(entry)
+                        },
+                    )
+                },
+                onDismiss = { dockMenuIndex = null },
+            )
+        }
     }
 
     // バックアップ復元後のウィジェット再追加(ウィジェットIDは端末ごとに発行されるため再バインドが必要)
@@ -470,182 +633,377 @@ fun HomeScreen(
     }
 }
 
+/** グリッド上の1項目。セル座標をDpに変換して配置する。 */
 @Composable
-private fun WidgetBox(
-    item: HomeItem,
-    widgets: WidgetController,
-    alphaValue: Float,
-    widthDp: Int,
-    heightDp: Int,
-    showHandle: Boolean,
-    onHandle: () -> Unit,
-) {
-    Box(Modifier.fillMaxSize().padding(2.dp)) {
-        AndroidView(
-            factory = { ctx -> widgets.createView(ctx, item.widgetId) ?: View(ctx) },
-            update = { v ->
-                if (v is AppWidgetHostView) {
-                    runCatching { v.updateAppWidgetSize(null, widthDp, heightDp, widthDp, heightDp) }
+private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
+    val s = env.settings
+    val w = cellW * item.spanX
+    val h = cellH * item.spanY
+    val single = item.spanX == 1 && item.spanY == 1
+    val iconDp = if (single) min(s.iconSizeDp, (cellW.value - 8f).toInt()).coerceAtLeast(24)
+    else (min(w.value, h.value) * 0.6f).toInt().coerceAtLeast(24)
+    val iconAlpha = if (item.alpha >= 0f) item.alpha else s.iconAlpha
+
+    Box(
+        Modifier
+            .offset(cellW * item.x, cellH * item.y)
+            .size(w, h),
+    ) {
+        when (item.type) {
+            HomeItem.APP -> {
+                val app = env.appMap[item.appKey]
+                if (app != null) {
+                    AppCell(
+                        app = app,
+                        iconSizeDp = iconDp,
+                        showLabel = s.showLabels,
+                        labelSizeSp = s.labelSizeSp,
+                        onWallpaper = true,
+                        modifier = Modifier.fillMaxSize(),
+                        onClick = { env.onLaunch(app) },
+                        onLongClick = { env.onSelect(item.id) },
+                        iconAlpha = iconAlpha,
+                    )
                 }
-            },
-            modifier = Modifier.fillMaxSize().alpha(alphaValue),
-        )
-        if (showHandle) {
-            Box(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .clickable(onClick = onHandle),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("⋮", color = Color.White)
             }
-        }
-    }
-}
-
-@Composable
-private fun HomeSearchBar(query: String, onQueryChange: (String) -> Unit, onSubmit: () -> Unit) {
-    TextField(
-        value = query,
-        onValueChange = onQueryChange,
-        singleLine = true,
-        placeholder = { Text("アプリ・Webを検索") },
-        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-        trailingIcon = if (query.isNotEmpty()) {
-            { TextButton(onClick = { onQueryChange("") }) { Text("✕") } }
-        } else null,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { onSubmit() }),
-        shape = RoundedCornerShape(28.dp),
-        colors = TextFieldDefaults.colors(
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-        ),
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-    )
-}
-
-@Composable
-private fun SearchResults(
-    query: String,
-    apps: List<AppInfo>,
-    onLaunch: (AppInfo) -> Unit,
-    onWeb: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val matches = remember(apps, query) {
-        AppSorter.sort(AppSorter.filter(apps, query), SortMode.NAME, emptyMap()).take(40)
-    }
-    LazyColumn(modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
-        item {
-            Text(
-                "「${query.trim()}」をWebで検索",
-                color = Color.White,
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onWeb).padding(vertical = 12.dp),
+            HomeItem.FOLDER -> {
+                val folder = env.folders.firstOrNull { it.id == item.ref }
+                if (folder != null) {
+                    FolderTile(
+                        folder = folder,
+                        appMap = env.appMap,
+                        iconSizeDp = iconDp,
+                        showLabel = s.showLabels,
+                        labelSizeSp = s.labelSizeSp,
+                        iconAlpha = iconAlpha,
+                        onWallpaper = true,
+                        modifier = Modifier.fillMaxSize(),
+                        onClick = { env.onOpenFolder(folder.id) },
+                        onLongClick = { env.onSelect(item.id) },
+                    )
+                }
+            }
+            HomeItem.WIDGET -> WidgetBox(
+                item = item,
+                widgets = env.widgets,
+                alphaValue = if (item.alpha >= 0f) item.alpha else s.widgetGlobalAlpha,
+                widthDp = w.value.toInt(),
+                heightDp = h.value.toInt(),
+                showHandle = !s.lockLayout,
+                onSelect = { env.onSelect(item.id) },
+            )
+            HomeItem.STACK -> StackBox(
+                children = env.items.filter { it.parent == item.id },
+                widgets = env.widgets,
+                settings = s,
+                widthDp = w.value.toInt(),
+                heightDp = h.value.toInt(),
+                showHandle = !s.lockLayout,
+                onSelect = { env.onSelect(item.id) },
+            )
+            HomeItem.SEARCH -> SearchBarTile(
+                onClick = env.onOpenSearch,
+                onLongClick = { env.onSelect(item.id) },
+            )
+            HomeItem.MEDIA -> MediaBar(
+                state = env.mediaState,
+                media = env.media,
+                onRequestPermission = env.onRequestNotificationAccess,
+                onLongClick = { env.onSelect(item.id) },
             )
         }
-        items(matches, key = { it.key }) { app ->
-            Row(
-                Modifier.fillMaxWidth().clickable { onLaunch(app) }.padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AppIcon(app, 40)
-                Text(
-                    app.label,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(start = 12.dp),
+    }
+}
+
+/** 選択中の項目の枠。本体をドラッグで移動、右下のつまみをドラッグでリサイズ(離すとグリッドにスナップ)。 */
+@Composable
+private fun EditFrame(
+    item: HomeItem,
+    cellWpx: Float,
+    cellHpx: Float,
+    cols: Int,
+    rows: Int,
+    onCommit: (x: Int, y: Int, sx: Int, sy: Int) -> Unit,
+) {
+    val density = LocalDensity.current
+    var dx by remember { mutableFloatStateOf(0f) }
+    var dy by remember { mutableFloatStateOf(0f) }
+    var dw by remember { mutableFloatStateOf(0f) }
+    var dh by remember { mutableFloatStateOf(0f) }
+    val baseW = cellWpx * item.spanX
+    val baseH = cellHpx * item.spanY
+    val shape = RoundedCornerShape(12.dp)
+    val primary = MaterialTheme.colorScheme.primary
+
+    Box(
+        Modifier
+            .offset { IntOffset((item.x * cellWpx + dx).roundToInt(), (item.y * cellHpx + dy).roundToInt()) }
+            .size(
+                with(density) { (baseW + dw).coerceAtLeast(cellWpx * 0.5f).toDp() },
+                with(density) { (baseH + dh).coerceAtLeast(cellHpx * 0.5f).toDp() },
+            )
+            .border(2.dp, primary, shape)
+            .background(primary.copy(alpha = 0.15f), shape)
+            .pointerInput(item.id, item.x, item.y, item.spanX, item.spanY, cols, rows) {
+                detectDragGestures(
+                    onDragEnd = {
+                        val nx = ((item.x * cellWpx + dx) / cellWpx).roundToInt().coerceIn(0, cols - item.spanX)
+                        val ny = ((item.y * cellHpx + dy) / cellHpx).roundToInt().coerceIn(0, rows - item.spanY)
+                        dx = 0f
+                        dy = 0f
+                        onCommit(nx, ny, item.spanX, item.spanY)
+                    },
+                    onDragCancel = {
+                        dx = 0f
+                        dy = 0f
+                    },
+                    onDrag = { change, amount ->
+                        change.consume()
+                        dx += amount.x
+                        dy += amount.y
+                    },
                 )
-            }
+            },
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .size(44.dp)
+                .pointerInput(item.id, item.x, item.y, item.spanX, item.spanY, cols, rows) {
+                    detectDragGestures(
+                        onDragEnd = {
+                            val nsx = ((baseW + dw) / cellWpx).roundToInt().coerceIn(1, cols - item.x)
+                            val nsy = ((baseH + dh) / cellHpx).roundToInt().coerceIn(1, rows - item.y)
+                            dw = 0f
+                            dh = 0f
+                            onCommit(item.x, item.y, nsx, nsy)
+                        },
+                        onDragCancel = {
+                            dw = 0f
+                            dh = 0f
+                        },
+                        onDrag = { change, amount ->
+                            change.consume()
+                            dw += amount.x
+                            dh += amount.y
+                        },
+                    )
+                }
+                .padding(10.dp)
+                .clip(CircleShape)
+                .background(primary),
+        )
+    }
+}
+
+@Composable
+private fun PageDots(count: Int, current: Int) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        repeat(count) { i ->
+            Box(
+                Modifier
+                    .padding(3.dp)
+                    .size(if (i == current) 8.dp else 6.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = if (i == current) 0.95f else 0.45f)),
+            )
+        }
+    }
+}
+
+/** ドックの1スロット。アプリ・フォルダ・空きのいずれか。 */
+@Composable
+private fun DockSlot(entry: String?, env: HomeEnv, onEmpty: () -> Unit, onLong: () -> Unit) {
+    val s = env.settings
+    val folderId = entry?.let { DockEntry.folderId(it) }
+    val folder = folderId?.let { id -> env.folders.firstOrNull { it.id == id } }
+    val app = if (folderId == null && entry != null) env.appMap[entry] else null
+    when {
+        folder != null -> FolderTile(
+            folder = folder,
+            appMap = env.appMap,
+            iconSizeDp = s.iconSizeDp,
+            showLabel = false,
+            labelSizeSp = s.labelSizeSp,
+            iconAlpha = s.iconAlpha,
+            onWallpaper = false,
+            onClick = { env.onOpenFolder(folder.id) },
+            onLongClick = onLong,
+        )
+        app != null -> AppCell(
+            app = app,
+            iconSizeDp = s.iconSizeDp,
+            showLabel = false,
+            labelSizeSp = s.labelSizeSp,
+            onWallpaper = false,
+            onClick = { env.onLaunch(app) },
+            onLongClick = onLong,
+            iconAlpha = s.iconAlpha,
+        )
+        else -> Box(
+            Modifier
+                .size(s.iconSizeDp.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onEmpty),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text("+", color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
 
 @Composable
-private fun MediaPanel(state: MediaHelper.State, media: MediaHelper, onRequestPermission: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)),
-        shape = RoundedCornerShape(20.dp),
+private fun SearchBarTile(onClick: () -> Unit, onLongClick: () -> Unit) {
+    val shape = RoundedCornerShape(28.dp)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(4.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        contentAlignment = Alignment.CenterStart,
     ) {
-        Row(Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(end = 8.dp)) {
+        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+            Text(
+                "アプリ・Webを検索",
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+    }
+}
+
+/** メディア操作バー。背景を不透明に近くし、文字色を明示して視認性を確保している。 */
+@Composable
+private fun MediaBar(
+    state: MediaHelper.State,
+    media: MediaHelper,
+    onRequestPermission: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val onSurface = MaterialTheme.colorScheme.onSurface
+    val shape = RoundedCornerShape(20.dp)
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(4.dp)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.97f))
+            .combinedClickable(onClick = {}, onLongClick = onLongClick),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f).padding(end = 6.dp)) {
                 if (!state.permitted) {
                     Text(
                         "曲名を表示するには通知アクセスを許可",
-                        style = MaterialTheme.typography.bodySmall,
+                        color = onSurface,
+                        fontSize = 13.sp,
                         modifier = Modifier.clickable(onClick = onRequestPermission),
                     )
                 } else {
                     Text(
                         state.title ?: if (state.hasSession) "再生中のメディア" else "メディアなし",
-                        style = MaterialTheme.typography.bodyMedium,
+                        color = onSurface,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     state.artist?.let {
-                        Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            it,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 }
             }
-            TextButton(onClick = { media.previous() }) { Text("⏮") }
-            TextButton(onClick = { media.playPause() }) { Text(if (state.playing) "⏸" else "▶") }
-            TextButton(onClick = { media.next() }) { Text("⏭") }
+            val colors = ButtonDefaults.textButtonColors(contentColor = onSurface)
+            TextButton(onClick = { media.previous() }, colors = colors) { Text("⏮", fontSize = 20.sp) }
+            TextButton(onClick = { media.playPause() }, colors = colors) { Text(if (state.playing) "⏸" else "▶", fontSize = 20.sp) }
+            TextButton(onClick = { media.next() }, colors = colors) { Text("⏭", fontSize = 20.sp) }
         }
     }
 }
 
+/** 検索バーをタップしたときの全画面検索。アプリ名の部分一致とWeb検索。 */
 @Composable
-private fun WidgetPickerDialog(
-    widgets: WidgetController,
-    onPick: (AppWidgetProviderInfo) -> Unit,
-    onDismiss: () -> Unit,
+private fun SearchOverlay(
+    apps: List<AppInfo>,
+    searchUrl: String,
+    onLaunch: (AppInfo) -> Unit,
+    onClose: () -> Unit,
 ) {
-    val providers = remember {
-        widgets.providers().map { it to widgets.labelOf(it) }.sortedBy { it.second.lowercase() }
-    }
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
-    val filtered = remember(providers, query) {
-        if (query.isBlank()) providers else providers.filter { it.second.contains(query.trim(), ignoreCase = true) }
+    val focus = remember { FocusRequester() }
+    val matches = remember(apps, query) {
+        AppSorter.sort(AppSorter.filter(apps, query), SortMode.NAME, emptyMap()).take(50)
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
-        title = { Text("ウィジェットを選択") },
-        text = {
-            Column {
-                OutlinedTextField(
+    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextField(
                     value = query,
                     onValueChange = { query = it },
                     singleLine = true,
-                    label = { Text("検索") },
-                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("アプリ・Webを検索") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { openWebSearch(context, searchUrl, query) }),
+                    shape = RoundedCornerShape(28.dp),
+                    colors = TextFieldDefaults.colors(
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent,
+                    ),
+                    modifier = Modifier.weight(1f).focusRequester(focus),
                 )
-                LazyColumn(Modifier.heightIn(max = 360.dp).padding(top = 8.dp)) {
-                    items(filtered, key = { it.first.provider.flattenToString() }) { (info, label) ->
-                        Column(Modifier.fillMaxWidth().clickable { onPick(info) }.padding(vertical = 8.dp)) {
-                            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                info.provider.packageName,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.outline,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
+                TextButton(onClick = onClose) { Text("閉じる") }
+            }
+            LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                if (query.isNotBlank()) {
+                    item {
+                        Text(
+                            "「${query.trim()}」をWebで検索",
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { openWebSearch(context, searchUrl, query) }
+                                .padding(vertical = 12.dp),
+                        )
+                    }
+                }
+                items(matches, key = { it.key }) { app ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onLaunch(app) }.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AppIcon(app, 40)
+                        Text(
+                            app.label,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 12.dp),
+                        )
                     }
                 }
             }
-        },
-    )
+        }
+    }
 }
 
-/** 位置・(ウィジェットは)サイズと透明度を数値で編集する。 */
+/** 位置・サイズ・不透明度を数値で編集する(ドラッグ操作の補助)。 */
 @Composable
 private fun ItemEditDialog(
     item: HomeItem,
@@ -655,41 +1013,40 @@ private fun ItemEditDialog(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val isWidget = item.type == HomeItem.WIDGET
+    val hasAlpha = item.type == HomeItem.APP || item.type == HomeItem.FOLDER || item.type == HomeItem.WIDGET
+    val globalAlpha = if (item.type == HomeItem.WIDGET) settings.widgetGlobalAlpha else settings.iconAlpha
     var page by remember { mutableIntStateOf(item.page + 1) }
     var x by remember { mutableIntStateOf(item.x + 1) }
     var y by remember { mutableIntStateOf(item.y + 1) }
     var sx by remember { mutableIntStateOf(item.spanX) }
     var sy by remember { mutableIntStateOf(item.spanY) }
     var useGlobal by remember { mutableStateOf(item.alpha < 0f) }
-    var alphaV by remember { mutableFloatStateOf(if (item.alpha < 0f) settings.widgetGlobalAlpha else item.alpha) }
+    var alphaV by remember { mutableFloatStateOf(if (item.alpha < 0f) globalAlpha else item.alpha) }
 
     val cols = settings.gridCols
     val rows = settings.gridRows
-    val spanX = if (isWidget) sx.coerceIn(1, cols) else 1
-    val spanY = if (isWidget) sy.coerceIn(1, rows) else 1
+    val spanX = sx.coerceIn(1, cols)
+    val spanY = sy.coerceIn(1, rows)
     val xMax = cols - spanX + 1
     val yMax = rows - spanY + 1
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isWidget) "ウィジェットの編集" else "アプリ位置の編集") },
+        title = { Text("位置・サイズ・不透明度") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 IntSliderRow("ページ", page.coerceIn(1, settings.pageCount), 1, settings.pageCount) { page = it }
-                if (isWidget) {
-                    IntSliderRow("幅(マス)", spanX, 1, cols) { sx = it }
-                    IntSliderRow("高さ(マス)", spanY, 1, rows) { sy = it }
-                }
+                IntSliderRow("幅(マス)", spanX, 1, cols) { sx = it }
+                IntSliderRow("高さ(マス)", spanY, 1, rows) { sy = it }
                 IntSliderRow("横位置", x.coerceIn(1, xMax), 1, xMax) { x = it }
                 IntSliderRow("縦位置", y.coerceIn(1, yMax), 1, yMax) { y = it }
-                if (isWidget) {
+                if (hasAlpha) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("全体の透明度設定を使う", Modifier.weight(1f))
+                        Text("全体の不透明度設定を使う", Modifier.weight(1f))
                         Switch(checked = useGlobal, onCheckedChange = { useGlobal = it })
                     }
                     if (!useGlobal) {
-                        PercentSliderRow("このウィジェットの不透明度", alphaV) { alphaV = it }
+                        PercentSliderRow("この項目の不透明度", alphaV, 0.1f, 1f) { alphaV = it }
                     }
                 }
             }
@@ -702,7 +1059,7 @@ private fun ItemEditDialog(
                     y = y.coerceIn(1, yMax) - 1,
                     spanX = spanX,
                     spanY = spanY,
-                    alpha = if (!isWidget || useGlobal) -1f else alphaV,
+                    alpha = if (!hasAlpha || useGlobal) -1f else alphaV,
                 )
                 val others = allItems.filter { it.id != item.id }
                 if (GridLogic.isFree(others, candidate.page, candidate.x, candidate.y, candidate.spanX, candidate.spanY)) {

@@ -1,6 +1,8 @@
 package jp.achi.homelauncher
 
 import jp.achi.homelauncher.data.BackupCodec
+import jp.achi.homelauncher.data.DockEntry
+import jp.achi.homelauncher.data.Folder
 import jp.achi.homelauncher.data.HomeItem
 import jp.achi.homelauncher.data.LauncherSettings
 import jp.achi.homelauncher.data.SortMode
@@ -40,6 +42,35 @@ class BackupCodecTest {
         assertEquals(0.5f, w.alpha, 0.001f)
         // ウィジェットIDは端末依存なので復元時に破棄される
         assertEquals(-1, w.widgetId)
+    }
+
+    @Test
+    fun foldersStacksAndSpecialItemsRoundTrip() {
+        val folder = Folder(id = "f1", name = "ゲーム", apps = listOf("p/a", "q/b"))
+        val items = listOf(
+            HomeItem(id = "fi", type = HomeItem.FOLDER, page = 0, x = 0, y = 0, ref = "f1"),
+            HomeItem(id = "st", type = HomeItem.STACK, page = 0, x = 0, y = 1, spanX = 4, spanY = 2),
+            HomeItem(id = "ch", type = HomeItem.WIDGET, page = 0, x = 0, y = 0, widgetId = 9, provider = "p/.W", parent = "st"),
+            HomeItem(id = "se", type = HomeItem.SEARCH, page = 0, x = 0, y = 3, spanX = 4),
+            HomeItem(id = "me", type = HomeItem.MEDIA, page = 0, x = 0, y = 4, spanX = 4),
+        )
+        val dock = listOf("p/a", DockEntry.folder("f1"))
+        val r = BackupCodec.decode(BackupCodec.encode(LauncherSettings(), items, dock, emptyMap(), listOf(folder)))
+
+        assertEquals(listOf(folder), r.folders)
+        assertEquals(dock, r.dock)
+        assertEquals(5, r.items.size)
+        assertEquals("st", r.items.first { it.id == "ch" }.parent)
+        assertEquals(-1, r.items.first { it.id == "ch" }.widgetId)
+        assertEquals("f1", r.items.first { it.id == "fi" }.ref)
+        assertEquals("f1", DockEntry.folderId(dock[1]))
+        assertEquals(null, DockEntry.folderId("p/a"))
+    }
+
+    @Test
+    fun iconAlphaIsClamped() {
+        assertEquals(0.1f, LauncherSettings.fromJson(JSONObject().put("iconAlpha", 0.0)).iconAlpha, 0.001f)
+        assertEquals(1f, LauncherSettings.fromJson(JSONObject()).iconAlpha, 0.001f)
     }
 
     @Test

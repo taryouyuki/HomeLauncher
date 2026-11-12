@@ -73,7 +73,9 @@ class AppRepository(context: Context) {
             .filter { it.activityInfo.packageName != appContext.packageName }
             .map { ri ->
                 val pkg = ri.activityInfo.packageName
-                val updated = runCatching { pm.getPackageInfo(pkg, 0).lastUpdateTime }.getOrDefault(0L)
+                val updated = runCatching {
+                    pm.getPackageInfo(pkg, 0).let { maxOf(it.lastUpdateTime, it.firstInstallTime) }
+                }.getOrDefault(0L)
                 AppInfo(
                     label = ri.loadLabel(pm)?.toString().orEmpty().ifEmpty { pkg },
                     packageName = pkg,

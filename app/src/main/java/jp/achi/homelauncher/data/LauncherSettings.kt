@@ -9,12 +9,11 @@ data class LauncherSettings(
     val gridRows: Int = 5,
     val pageCount: Int = 2,
     val iconSizeDp: Int = 56,
+    val iconAlpha: Float = 1f,
     val showLabels: Boolean = true,
     val labelSizeSp: Int = 11,
     val showDock: Boolean = true,
     val dockCount: Int = 5,
-    val showSearchBar: Boolean = true,
-    val showMediaPanel: Boolean = true,
     val lockLayout: Boolean = false,
     // アプリ一覧
     val drawerCols: Int = 4,
@@ -35,12 +34,11 @@ data class LauncherSettings(
         put("gridRows", gridRows)
         put("pageCount", pageCount)
         put("iconSizeDp", iconSizeDp)
+        put("iconAlpha", iconAlpha.toDouble())
         put("showLabels", showLabels)
         put("labelSizeSp", labelSizeSp)
         put("showDock", showDock)
         put("dockCount", dockCount)
-        put("showSearchBar", showSearchBar)
-        put("showMediaPanel", showMediaPanel)
         put("lockLayout", lockLayout)
         put("drawerCols", drawerCols)
         put("drawerIconSizeDp", drawerIconSizeDp)
@@ -66,12 +64,11 @@ data class LauncherSettings(
                 gridRows = o.optInt("gridRows", d.gridRows).coerceIn(3, 10),
                 pageCount = o.optInt("pageCount", d.pageCount).coerceIn(1, 8),
                 iconSizeDp = o.optInt("iconSizeDp", d.iconSizeDp).coerceIn(32, 96),
+                iconAlpha = o.optDouble("iconAlpha", d.iconAlpha.toDouble()).toFloat().coerceIn(0.1f, 1f),
                 showLabels = o.optBoolean("showLabels", d.showLabels),
                 labelSizeSp = o.optInt("labelSizeSp", d.labelSizeSp).coerceIn(8, 16),
                 showDock = o.optBoolean("showDock", d.showDock),
                 dockCount = o.optInt("dockCount", d.dockCount).coerceIn(3, 7),
-                showSearchBar = o.optBoolean("showSearchBar", d.showSearchBar),
-                showMediaPanel = o.optBoolean("showMediaPanel", d.showMediaPanel),
                 lockLayout = o.optBoolean("lockLayout", d.lockLayout),
                 drawerCols = o.optInt("drawerCols", d.drawerCols).coerceIn(3, 7),
                 drawerIconSizeDp = o.optInt("drawerIconSizeDp", d.drawerIconSizeDp).coerceIn(32, 96),

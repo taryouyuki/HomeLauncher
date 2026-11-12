@@ -1,0 +1,249 @@
+@file:OptIn(ExperimentalFoundationApi::class)
+
+package jp.achi.homelauncher.ui
+
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import jp.achi.homelauncher.data.AppInfo
+import jp.achi.homelauncher.data.AppSorter
+import jp.achi.homelauncher.data.Folder
+import jp.achi.homelauncher.data.SortMode
+
+/** ホーム/ドック上のフォルダアイコン(中のアプリを最大4つ並べて表示)。 */
+@Composable
+fun FolderTile(
+    folder: Folder,
+    appMap: Map<String, AppInfo>,
+    iconSizeDp: Int,
+    showLabel: Boolean,
+    labelSizeSp: Int,
+    iconAlpha: Float,
+    onWallpaper: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(2.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            Modifier
+                .size(iconSizeDp.dp)
+                .clip(RoundedCornerShape((iconSizeDp * 0.24f).dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f * iconAlpha))
+                .padding((iconSizeDp * 0.08f).dp),
+        ) {
+            val mini = (iconSizeDp * 0.36f).toInt().coerceAtLeast(12)
+            val shown = folder.apps.mapNotNull { appMap[it] }.take(4)
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
+                shown.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        row.forEach { AppIcon(it, mini, Modifier.alpha(iconAlpha)) }
+                    }
+                }
+            }
+        }
+        if (showLabel) {
+            Text(
+                text = folder.name,
+                color = if (onWallpaper) Color.White else MaterialTheme.colorScheme.onSurface,
+                fontSize = labelSizeSp.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                style = TextStyle(shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null),
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+    }
+}
+
+/** フォルダを開いたときのダイアログ。アプリの起動・追加・取り出し、名前変更、フォルダ削除ができる。 */
+@Composable
+fun FolderDialog(
+    folder: Folder,
+    appMap: Map<String, AppInfo>,
+    allApps: List<AppInfo>,
+    iconSizeDp: Int,
+    labelSizeSp: Int,
+    onLaunch: (AppInfo) -> Unit,
+    onPutOnHome: (AppInfo) -> Unit,
+    onRemoveFromFolder: (AppInfo) -> Unit,
+    onAddApp: (AppInfo) -> Unit,
+    onRename: (String) -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+    var showRename by remember { mutableStateOf(false) }
+    var menuApp by remember { mutableStateOf<AppInfo?>(null) }
+    val members = folder.apps.mapNotNull { appMap[it] }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(folder.name) },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
+        text = {
+            Column {
+                if (members.isEmpty()) {
+                    Text("アプリがありません。「アプリを追加」から入れてください。", modifier = Modifier.padding(vertical = 8.dp))
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.heightIn(max = 300.dp),
+                    ) {
+                        items(members, key = { it.key }) { app ->
+                            AppCell(
+                                app = app,
+                                iconSizeDp = iconSizeDp,
+                                showLabel = true,
+                                labelSizeSp = labelSizeSp,
+                                onWallpaper = false,
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                onClick = { onLaunch(app) },
+                                onLongClick = { menuApp = app },
+                            )
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    TextButton(onClick = { showPicker = true }) { Text("アプリを追加") }
+                    TextButton(onClick = { showRename = true }) { Text("名前変更") }
+                    TextButton(onClick = onDelete) { Text("フォルダ削除") }
+                }
+            }
+        },
+    )
+
+    if (showPicker) {
+        AppPickerDialog(
+            apps = AppSorter.sort(allApps, SortMode.NAME, emptyMap()),
+            onPick = {
+                showPicker = false
+                onAddApp(it)
+            },
+            onDismiss = { showPicker = false },
+        )
+    }
+
+    if (showRename) {
+        TextInputDialog(
+            title = "フォルダ名",
+            initial = folder.name,
+            onConfirm = {
+                showRename = false
+                onRename(it)
+            },
+            onDismiss = { showRename = false },
+        )
+    }
+
+    menuApp?.let { app ->
+        MenuDialog(
+            title = app.label,
+            entries = listOf(
+                "ホーム画面に出す" to {
+                    menuApp = null
+                    onPutOnHome(app)
+                },
+                "フォルダから外す" to {
+                    menuApp = null
+                    onRemoveFromFolder(app)
+                },
+            ),
+            onDismiss = { menuApp = null },
+        )
+    }
+}
+
+/** アプリを入れるフォルダを選ぶ。 */
+@Composable
+fun FolderPickDialog(folders: List<Folder>, onPick: (Folder) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+        title = { Text("フォルダを選択") },
+        text = {
+            if (folders.isEmpty()) {
+                Text("フォルダがありません。ホーム画面の空き地を長押しして「フォルダを作成」してください。")
+            } else {
+                LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                    items(folders, key = { it.id }) { f ->
+                        Text(
+                            "${f.name}(${f.apps.size})",
+                            modifier = Modifier.fillMaxWidth().clickable { onPick(f) }.padding(vertical = 12.dp),
+                        )
+                    }
+                }
+            }
+        },
+    )
+}
+
+/** 1行テキスト入力ダイアログ。 */
+@Composable
+fun TextInputDialog(
+    title: String,
+    initial: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        },
+        confirmButton = { TextButton(onClick = { onConfirm(text) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+    )
+}

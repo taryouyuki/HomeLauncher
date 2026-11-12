@@ -62,6 +62,9 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
 
     var query by remember { mutableStateOf("") }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
+    var folderPickApp by remember { mutableStateOf<AppInfo?>(null) }
+    val folders by vm.folders.collectAsStateWithLifecycle()
+    val dateFmt = remember { java.text.SimpleDateFormat("yy/MM/dd", java.util.Locale.JAPAN) }
 
     val list = remember(apps, query, settings.drawerSort, counts) {
         AppSorter.sort(AppSorter.filter(apps, query), settings.drawerSort, counts)
@@ -137,6 +140,11 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                         showLabel = true,
                         labelSizeSp = settings.labelSizeSp,
                         onWallpaper = false,
+                        subLabel = when (settings.drawerSort) {
+                            SortMode.UPDATED -> dateFmt.format(java.util.Date(app.updatedAt))
+                            SortMode.LAUNCH -> "${counts[app.key] ?: 0}回"
+                            SortMode.NAME -> null
+                        },
                         modifier = Modifier.padding(vertical = 8.dp),
                         onClick = {
                             vm.launch(context, app)
@@ -150,6 +158,18 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 }
             }
         }
+    }
+
+    folderPickApp?.let { app ->
+        FolderPickDialog(
+            folders = folders,
+            onPick = { folder ->
+                folderPickApp = null
+                vm.addToFolder(folder.id, app.key)
+                toast(context, "「${folder.name}」に追加しました")
+            },
+            onDismiss = { folderPickApp = null },
+        )
     }
 
     menuApp?.let { app ->
@@ -167,14 +187,12 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 },
                 "ドックに追加" to {
                     menuApp = null
-                    val s = vm.settings.value
-                    val dockNow = vm.dock.value
-                    if (dockNow.size >= s.dockCount && app.key !in dockNow) {
-                        toast(context, "ドックに空きがありません")
-                    } else {
-                        vm.setDockApp(dockNow.size, app.key)
-                        toast(context, "ドックに追加しました")
-                    }
+                    vm.setDockEntry(vm.dock.value.size, app.key)
+                    toast(context, "ドックに追加しました")
+                },
+                "フォルダに追加" to {
+                    menuApp = null
+                    folderPickApp = app
                 },
                 "アプリ情報" to {
                     menuApp = null
