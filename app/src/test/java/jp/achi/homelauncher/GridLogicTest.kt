@@ -122,4 +122,50 @@ class GridLogicTest {
         assertTrue(s.iconSizeDp in 32..96)
         assertTrue(s.dockHeightDp in 56..120)
     }
+
+    @Test
+    fun shiftPolicyInsertsAndPushesOthersBack() {
+        // A B C が並ぶ行で、C を先頭へ持ってくると C A B になる
+        val a = app(0, 0, 0)
+        val b = app(0, 1, 0)
+        val c = app(0, 2, 0)
+        val moverC = c.copy(x = 0, y = 0)
+        val (r, hit) = GridLogic.placeWithPolicy(listOf(a, b, c), moverC, "shift", 5, 4)
+        assertTrue(hit)
+        assertEquals(0, r.first { it.id == c.id }.x)
+        assertEquals(1, r.first { it.id == a.id }.x)
+        assertEquals(2, r.first { it.id == b.id }.x)
+    }
+
+    @Test
+    fun shiftPolicyWrapsToNextRow() {
+        val row = (0 until 4).map { app(0, it, 0) }
+        val mover = app(0, 0, 0)
+        val (r, _) = GridLogic.placeWithPolicy(row, mover, "shift", 5, 4)
+        val last = r.first { it.id == row[3].id }
+        assertEquals(0, last.x)
+        assertEquals(1, last.y)
+    }
+
+    @Test
+    fun shiftFallsBackWhenBlockedByWidget() {
+        val w = widget(0, 1, 0, 2, 1)
+        val a = app(0, 0, 0)
+        val (r, hit) = GridLogic.placeWithPolicy(listOf(a, w), app(0, 0, 0), "shift", 5, 4)
+        assertTrue(hit)
+        assertEquals(2, r.size)
+    }
+
+    @Test
+    fun heartShapeIsKnownSetting() {
+        val o = org.json.JSONObject().put("iconShape", "heart")
+        assertEquals("heart", jp.achi.homelauncher.data.LauncherSettings.fromJson(o).iconShape)
+    }
+
+    @Test
+    fun workAppKeyDiffersFromPersonalKey() {
+        val p = jp.achi.homelauncher.data.AppInfo("X", "a.b", "C", 0L)
+        val w = p.copy(work = true, userSerial = 10L)
+        assertTrue(p.key != w.key)
+    }
 }

@@ -133,15 +133,14 @@ object SwipeGuard {
     var widgetTouched: Boolean = false
 }
 
-/** ウィジェットに触れている間、SwipeGuard を立てる(入力は消費しない)。 */
+/**
+ * ウィジェットに触れたら SwipeGuard を立てる(入力は消費しない)。
+ * フラグは次のタッチの開始時(ホーム側)に下ろされるので、指を離す時点まで有効。
+ */
 fun Modifier.blockDrawerSwipe(): Modifier = pointerInput(Unit) {
     awaitEachGesture {
         awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         SwipeGuard.widgetTouched = true
-        do {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-        } while (event.changes.any { it.pressed })
-        SwipeGuard.widgetTouched = false
     }
 }
 
@@ -403,6 +402,7 @@ fun StackManageDialog(
     widgets: WidgetController,
     onAdd: () -> Unit,
     onRemove: (HomeItem) -> Unit,
+    onMove: (HomeItem, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -428,6 +428,8 @@ fun StackManageDialog(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
+                            TextButton(onClick = { onMove(child, -1) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text("↑") }
+                            TextButton(onClick = { onMove(child, 1) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text("↓") }
                             TextButton(onClick = { onRemove(child) }) { Text("削除") }
                         }
                     }

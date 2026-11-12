@@ -5,7 +5,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.LauncherApps
 import android.content.pm.PackageManager
+import android.os.Process
+import android.os.UserHandle
+import android.os.UserManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,6 +27,21 @@ class AppRepository(context: Context) {
     private val _apps = MutableStateFlow<List<AppInfo>>(emptyList())
     val apps: StateFlow<List<AppInfo>> = _apps.asStateFlow()
 
+    private val _workApps = MutableStateFlow<List<AppInfo>>(emptyList())
+    /** 仕事用プロファイル(Island など)のアプリ。LauncherApps で取得する。 */
+    val workApps: StateFlow<List<AppInfo>> = _workApps.asStateFlow()
+
+    private val launcherApps = appContext.getSystemService(LauncherApps::class.java)
+    private val userManager = appContext.getSystemService(UserManager::class.java)
+
+    private val profileCallback = object : LauncherApps.Callback() {
+        override fun onPackageRemoved(packageName: String?, user: UserHandle?) = refreshWork()
+        override fun onPackageAdded(packageName: String?, user: UserHandle?) = refreshWork()
+        override fun onPackageChanged(packageName: String?, user: UserHandle?) = refreshWork()
+        override fun onPackagesAvailable(packageNames: Array<out String>?, user: UserHandle?, replacing: Boolean) = refreshWork()
+        override fun onPackagesUnavailable(packageNames: Array<out String>?, user: UserHandle?, replacing: Boolean) = refreshWork()
+    }
+
     private var registered = false
 
     private val receiver = object : BroadcastReceiver() {
@@ -33,6 +52,7 @@ class AppRepository(context: Context) {
 
     fun start() {
         refresh()
+        runCatching { launcherApps?.registerCallback(profileCallback) }
         if (registered) return
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -48,12 +68,41 @@ class AppRepository(context: Context) {
     }
 
     fun stop() {
+        runCatching { launcherApps?.unregisterCallback(profileCallback) }
         if (!registered) return
         runCatching { appContext.unregisterReceiver(receiver) }
         registered = false
     }
 
+    fun refreshWork() {
+        executor.execute {
+            _workApps.value = runCatching { queryWorkApps() }.getOrDefault(emptyList())
+        }
+    }
+
+    /** 自分以外のプロファイル(仕事用)の起動可能アプリ。 */
+    private fun queryWorkApps(): List<AppInfo> {
+        val la = launcherApps ?: return emptyList()
+        val um = userManager ?: return emptyList()
+        val me = Process.myUserHandle()
+        return la.profiles.filter { it != me }.flatMap { user ->
+            val serial = um.getSerialNumberForUser(user)
+            la.getActivityList(null, user).map { info ->
+                AppInfo(
+                    label = info.label?.toString().orEmpty().ifEmpty { info.componentName.packageName },
+                    packageName = info.componentName.packageName,
+                    className = info.componentName.className,
+                    updatedAt = 0L,
+                    installedAt = info.firstInstallTime,
+                    work = true,
+                    userSerial = serial,
+                )
+            }
+        }.distinctBy { it.key }
+    }
+
     fun refresh() {
+        refreshWork()
         executor.execute {
             val list = runCatching { queryApps() }.getOrNull() ?: return@execute
             _apps.value = list
@@ -89,6 +138,11 @@ class AppRepository(context: Context) {
 
     /** アプリを起動。失敗(アンインストール直後など)しても例外は外に出さない。 */
     fun launch(context: Context, app: AppInfo): Boolean = runCatching {
+        if (app.work) {
+            val user = userManager?.getUserForSerialNumber(app.userSerial) ?: return false
+            launcherApps?.startMainActivity(ComponentName(app.packageName, app.className), user, null, null)
+            return true
+        }
         val intent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
             component = ComponentName(app.packageName, app.className)

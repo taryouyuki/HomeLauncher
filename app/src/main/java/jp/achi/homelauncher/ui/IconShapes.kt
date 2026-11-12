@@ -25,6 +25,7 @@ val ICON_SHAPE_LABELS: List<Pair<String, String>> = listOf(
     "pentagon" to "五角形",
     "hexagon" to "六角形",
     "octagon" to "八角形",
+    "heart" to "ハート",
 )
 
 private fun polar(size: Size, steps: Int, r: (Double) -> Double): Path = Path().apply {
@@ -61,6 +62,21 @@ private val FLOWER = GenericShape { size, _ ->
     addPath(polar(size, 160) { t -> 0.9 + 0.08 * cos(8 * t) })
 }
 
+/** やわらかいハート(媒介変数曲線)。アイコンが隠れすぎないよう、箱いっぱいに広げて描く。 */
+private val HEART = GenericShape { size, _ ->
+    val steps = 200
+    for (i in 0..steps) {
+        val t = 2.0 * PI * i / steps
+        val hx = 16.0 * sin(t).let { it * it * it }
+        val hy = 13.0 * cos(t) - 5.0 * cos(2 * t) - 2.0 * cos(3 * t) - cos(4 * t)
+        // hx は -16..16、hy はおよそ -17..12 → 0..1 に正規化
+        val x = ((hx + 16.0) / 32.0).toFloat() * size.width
+        val y = ((12.0 - hy) / 29.0).toFloat() * size.height
+        if (i == 0) moveTo(x, y) else lineTo(x, y)
+    }
+    close()
+}
+
 /** 形のキーから Shape を返す。original(や不明な値)は null。 */
 fun iconShapeOf(key: String): Shape? = when (key) {
     "circle" -> CircleShape
@@ -71,5 +87,6 @@ fun iconShapeOf(key: String): Shape? = when (key) {
     "pentagon" -> polygon(5)
     "hexagon" -> polygon(6)
     "octagon" -> polygon(8)
+    "heart" -> HEART
     else -> null
 }

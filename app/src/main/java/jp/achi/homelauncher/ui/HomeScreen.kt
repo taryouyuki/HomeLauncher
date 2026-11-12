@@ -10,6 +10,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -64,6 +67,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,8 +75,15 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -99,6 +110,7 @@ import jp.achi.homelauncher.media.BadgeStore
 import jp.achi.homelauncher.media.MediaHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -180,6 +192,12 @@ fun HomeScreen(
     /** 値が変わるとウィジェット等を作り直して画面を更新する */
     var refreshTick by remember { mutableIntStateOf(0) }
 
+    var editMode by remember { mutableStateOf(false) }
+    val editingNow = selectedId != null || editMode
+    val editingRef by rememberUpdatedState(editingNow)
+    val editModeRef by rememberUpdatedState(editMode)
+    val selectedRef by rememberUpdatedState(selectedId)
+
     val pagerState = rememberPagerState(pageCount = { settings.pageCount })
     val selectedItem = items.firstOrNull { it.id == selectedId }
 
@@ -187,6 +205,7 @@ fun HomeScreen(
         // ホームボタンで戻ってきたら、検索・編集モード・メニューを閉じて1ページ目へ
         searchOpen = false
         selectedId = null
+        editMode = false
         carrying = false
         emptyMenu = false
         openFolderId = null
@@ -194,7 +213,9 @@ fun HomeScreen(
     }
 
     BackHandler(enabled = searchOpen) { searchOpen = false }
-    BackHandler(enabled = selectedId != null && !searchOpen) { selectedId = null }
+    BackHandler(enabled = (selectedId != null || editMode) && !searchOpen) {
+        if (selectedId != null) selectedId = null else editMode = false
+    }
 
     fun buzz() {
         if (settings.haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -265,6 +286,25 @@ fun HomeScreen(
         }
     }
 
+    /** 幅をいっぱいに使う。高さは、ウィジェット(スタックなら中の全ウィジェット)が示す縦横比に合わせる。 */
+    fun fitWidth(item: HomeItem) {
+        val s = vm.settings.value
+        val kids = if (item.type == HomeItem.STACK) items.filter { it.parent == item.id } else listOf(item)
+        val ratios = kids.mapNotNull { w ->
+            widgets.findProvider(w.provider)?.let { i -> i.minHeight.toFloat() / i.minWidth.coerceAtLeast(1) }
+        }
+        val cw = cellDp.first
+        val ch = cellDp.second
+        val ratio = ratios.maxOrNull() ?: ((item.spanY * ch) / (item.spanX * cw))
+        val spanY = ceil(cw * s.gridCols * ratio / ch).toInt().coerceIn(1, s.gridRows)
+        val y = item.y.coerceAtMost(s.gridRows - spanY)
+        if (vm.placeAndResolve(item.copy(free = false, x = 0, y = y, spanX = s.gridCols, spanY = spanY))) {
+            toast(context, vm.overlapMessage())
+        } else {
+            toast(context, "幅いっぱいに調整しました")
+        }
+    }
+
     fun deleteItem(item: HomeItem) {
         selectedId = null
         if (item.type == HomeItem.FOLDER) {
@@ -313,7 +353,7 @@ fun HomeScreen(
         onOpenFolder = { openFolderId = it },
         onOpenSearch = { searchOpen = true },
         onRequestNotificationAccess = onRequestNotificationAccess,
-        editing = selectedId != null,
+        editing = editingNow,
         badges = badges,
         onDoubleTap = { code -> launchDtap(context, vm, appMap, code) },
         onBadgeMenu = { badgeMenuItem = it },
@@ -324,18 +364,25 @@ fun HomeScreen(
             .fillMaxSize()
             .background(Color.Black.copy(alpha = settings.scrimAlpha))
             .pointerInput(Unit) {
-                // 下から上へのスワイプでアプリ一覧。ウィジェットに触れて始めたスクロールは
-                // ウィジェット内の動きを優先し、アプリ一覧は開かない。
-                var total = 0f
-                var ignore = false
-                detectVerticalDragGestures(
-                    onDragStart = {
-                        total = 0f
-                        ignore = SwipeGuard.widgetTouched
-                    },
-                    onVerticalDrag = { _, dy -> total += dy },
-                    onDragEnd = { if (!ignore && total < -120f) onOpenDrawer() },
-                )
+                // 下から上へのスワイプでアプリ一覧。入力は消費せずに見張るだけなので、ウィジェット
+                // (メモ・Keep など)の中の縦スクロールを妨げない。ウィジェットに触れて始めたスワイプでは開かない。
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    SwipeGuard.widgetTouched = false
+                    var tx = 0f
+                    var ty = 0f
+                    while (true) {
+                        val ev = awaitPointerEvent(PointerEventPass.Initial)
+                        val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                        if (!c.pressed) break
+                        val d = c.positionChange()
+                        tx += d.x
+                        ty += d.y
+                    }
+                    if (!SwipeGuard.widgetTouched && !editingRef && ty < -120f && abs(ty) > abs(tx) * 1.5f) {
+                        onOpenDrawer()
+                    }
+                }
             },
     ) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
@@ -358,7 +405,17 @@ fun HomeScreen(
                             .fillMaxSize()
                             .pointerInput(page, cellWpx, cellHpx, cols, rows) {
                                 detectTapGestures(
-                                    onTap = { selectedId = null },
+                                    onTap = { off ->
+                                        if (editModeRef && selectedRef == null) {
+                                            // 編集モード: 空き地をタップで、その場所に追加するメニュー
+                                            val cx = (off.x / cellWpx).toInt().coerceIn(0, cols - 1)
+                                            val cy = (off.y / cellHpx).toInt().coerceIn(0, rows - 1)
+                                            pendingAt = Triple(page, cx, cy)
+                                            emptyMenu = true
+                                        } else {
+                                            selectedId = null
+                                        }
+                                    },
                                     onLongPress = { off ->
                                         val s = vm.settings.value
                                         if (s.lockLayout) return@detectTapGestures
@@ -452,6 +509,9 @@ fun HomeScreen(
                                         DockSlot(
                                             entry = dock.getOrNull(idx),
                                             env = env,
+                                            index = idx,
+                                            onMove = { from, to -> vm.moveDockEntry(from, to) },
+                                            onLift = { buzz() },
                                             onEmpty = { if (!settings.lockLayout) dockEmptyIndex = idx },
                                             onLong = {
                                                 if (!settings.lockLayout) {
@@ -472,6 +532,52 @@ fun HomeScreen(
             }
         }
 
+        // 編集ボタン(長押しなしで編集モードに入る)
+        if (settings.showEditButton && !settings.lockLayout && !searchOpen) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(end = 10.dp, bottom = (if (settings.showDock) settings.dockHeightDp + 44 else 20).dp)
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (editMode) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                    )
+                    .clickable {
+                        editMode = !editMode
+                        selectedId = null
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    if (editMode) "✓" else "✎",
+                    color = if (editMode) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    fontSize = 18.sp,
+                )
+            }
+        }
+        if (editMode && selectedItem == null) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(top = 8.dp, start = 8.dp, end = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "編集モード: タップで選択 / 空き地で追加",
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(start = 12.dp),
+                    )
+                    TextButton(onClick = { editMode = false }) { Text("完了") }
+                }
+            }
+        }
+
         // 編集モードの操作バー
         if (selectedItem != null) {
             Card(
@@ -485,6 +591,9 @@ fun HomeScreen(
                     TextButton(onClick = { editItem = selectedItem }) { Text("詳細") }
                     if (selectedItem.type == HomeItem.APP) {
                         TextButton(onClick = { folderPickItem = selectedItem }) { Text("フォルダへ") }
+                    }
+                    if (selectedItem.type == HomeItem.WIDGET || selectedItem.type == HomeItem.STACK) {
+                        TextButton(onClick = { fitWidth(selectedItem) }) { Text("幅いっぱいに") }
                     }
                     if (selectedItem.type == HomeItem.WIDGET) {
                         TextButton(onClick = {
@@ -502,7 +611,10 @@ fun HomeScreen(
                         TextButton(onClick = { stackManageId = selectedItem.id }) { Text("スタック管理") }
                     }
                     TextButton(onClick = { deleteItem(selectedItem) }) { Text("削除") }
-                    TextButton(onClick = { selectedId = null }) { Text("完了") }
+                    TextButton(onClick = {
+                        selectedId = null
+                        editMode = false
+                    }) { Text("完了") }
                 }
             }
         }
@@ -561,11 +673,28 @@ fun HomeScreen(
                 refreshTick++
                 toast(context, "画面を更新しました")
             })
-            add("表示を自動調整(大きさ・重なりを整える)" to {
+            add((if (editMode) "編集モードを終わる" else "編集モードにする(タップで編集)") to {
+                emptyMenu = false
+                editMode = !editMode
+                selectedId = null
+            })
+            add("自動調整: すべて(アイコン+ウィジェット+重なり)" to {
                 emptyMenu = false
                 vm.autoAdjust(cellDp.first, cellDp.second)
+                vm.autoAdjustWidgets { w -> widgets.findProvider(w.provider)?.let { widgets.suggestedSpan(it, cellDp.first, cellDp.second, density.density) } }
                 refreshTick++
-                toast(context, "アイコン・文字の大きさを合わせ、重なりを整えました")
+                toast(context, "大きさと配置を自動調整しました")
+            })
+            add("自動調整: ウィジェットのみ" to {
+                emptyMenu = false
+                vm.autoAdjustWidgets { w -> widgets.findProvider(w.provider)?.let { widgets.suggestedSpan(it, cellDp.first, cellDp.second, density.density) } }
+                refreshTick++
+                toast(context, "ウィジェットの大きさを自動調整しました")
+            })
+            add("自動調整: アプリアイコンのみ" to {
+                emptyMenu = false
+                vm.autoAdjustIcons(cellDp.first, cellDp.second)
+                toast(context, "アイコン・文字・ドックの大きさを自動調整しました")
             })
             add("壁紙を変更" to {
                 emptyMenu = false
@@ -764,6 +893,7 @@ fun HomeScreen(
             onRemove = { child ->
                 vm.removeItem(child.id).forEach { if (it.widgetId >= 0) widgets.delete(it.widgetId) }
             },
+            onMove = { child, delta -> vm.moveStackChild(child.id, delta) },
             onDismiss = { stackManageId = null },
         )
     }
@@ -955,6 +1085,8 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 state = env.mediaState,
                 media = env.media,
                 bgAlpha = if (item.alpha >= 0f) item.alpha else s.mediaBarAlpha,
+                buttonSp = s.mediaButtonSp,
+                overlay = s.mediaOverlay,
                 onRequestPermission = env.onRequestNotificationAccess,
                 onLongClick = { env.onSelect(item.id) },
             )
@@ -1119,45 +1251,94 @@ private fun PageDots(count: Int, current: Int) {
     }
 }
 
-/** ドックの1スロット。アプリ・フォルダ・空きのいずれか。アイコンの不透明度・大きさはドック専用の設定を使う。 */
+/**
+ * ドックの1スロット。アプリ・フォルダ・空きのいずれか。アイコンの不透明度・大きさはドック専用の設定を使う。
+ * 長押ししてそのまま左右へ動かすと並び替え(間のアイコンは1つずつずれる)、動かさず離すとメニュー。
+ */
 @Composable
-private fun DockSlot(entry: String?, env: HomeEnv, onEmpty: () -> Unit, onLong: () -> Unit) {
+private fun DockSlot(
+    entry: String?,
+    env: HomeEnv,
+    index: Int,
+    onMove: (Int, Int) -> Unit,
+    onLift: () -> Unit,
+    onEmpty: () -> Unit,
+    onLong: () -> Unit,
+) {
     val s = env.settings
-    val iconDp = min(s.iconSizeDp, s.dockHeightDp - 8).coerceAtLeast(24)
+    val iconDp = min(s.dockIconSizeDp, s.dockHeightDp - 8).coerceAtLeast(24)
     val folderId = entry?.let { DockEntry.folderId(it) }
     val folder = folderId?.let { id -> env.folders.firstOrNull { it.id == id } }
     val app = if (folderId == null && entry != null) env.appMap[entry] else null
-    when {
-        folder != null -> FolderTile(
-            folder = folder,
-            appMap = env.appMap,
-            iconSizeDp = iconDp,
-            showLabel = false,
-            labelSizeSp = s.labelSizeSp,
-            iconAlpha = s.dockIconAlpha,
-            onWallpaper = false,
-            onClick = { env.onOpenFolder(folder.id) },
-            onLongClick = onLong,
-        )
-        app != null -> AppCell(
-            app = app,
-            badge = if (s.showBadges) env.badges[app.packageName]?.size ?: 0 else 0,
-            iconSizeDp = iconDp,
-            showLabel = false,
-            labelSizeSp = s.labelSizeSp,
-            onWallpaper = false,
-            onClick = { env.onLaunch(app) },
-            onLongClick = onLong,
-            iconAlpha = s.dockIconAlpha,
-        )
-        else -> Box(
-            Modifier
-                .size(iconDp.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onEmpty),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("+", color = MaterialTheme.colorScheme.onSurface)
+    var dragDx by remember { mutableFloatStateOf(0f) }
+    var slotW by remember { mutableFloatStateOf(1f) }
+    val currentLong by rememberUpdatedState(onLong)
+    val currentMove by rememberUpdatedState(onMove)
+    val currentLift by rememberUpdatedState(onLift)
+
+    Box(
+        Modifier
+            .onSizeChanged { slotW = it.width.toFloat().coerceAtLeast(1f) }
+            .pointerInput(entry, index) {
+                if (entry == null) return@pointerInput
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val lp = awaitLongPressOrCancellation(down.id)
+                    if (lp != null) {
+                        currentLift()
+                        var total = 0f
+                        var moved = false
+                        while (true) {
+                            val ev = awaitPointerEvent()
+                            val c = ev.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!c.pressed) break
+                            total += c.positionChange().x
+                            c.consume()
+                            if (abs(total) > viewConfiguration.touchSlop) moved = true
+                            if (moved) dragDx = total
+                        }
+                        val delta = (total / slotW).roundToInt()
+                        dragDx = 0f
+                        if (moved && delta != 0) currentMove(index, index + delta) else if (!moved) currentLong()
+                    }
+                }
+            }
+            .offset { IntOffset(dragDx.roundToInt(), 0) }
+            .zIndex(if (dragDx != 0f) 1f else 0f),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            folder != null -> FolderTile(
+                folder = folder,
+                appMap = env.appMap,
+                iconSizeDp = iconDp,
+                showLabel = false,
+                labelSizeSp = s.labelSizeSp,
+                iconAlpha = s.dockIconAlpha,
+                onWallpaper = false,
+                onClick = { env.onOpenFolder(folder.id) },
+                onLongClick = {},
+            )
+            app != null -> AppCell(
+                app = app,
+                badge = if (s.showBadges) env.badges[app.packageName]?.size ?: 0 else 0,
+                iconSizeDp = iconDp,
+                showLabel = false,
+                labelSizeSp = s.labelSizeSp,
+                onWallpaper = false,
+                onClick = { env.onLaunch(app) },
+                onLongClick = {},
+                iconAlpha = s.dockIconAlpha,
+            )
+            else -> Box(
+                Modifier
+                    .size(iconDp.dp)
+                    .clip(CircleShape)
+                    .clickable(onClick = onEmpty),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("+", color = MaterialTheme.colorScheme.onSurface)
+            }
         }
     }
 }
@@ -1188,31 +1369,88 @@ private fun SearchBarTile(bgAlpha: Float, onClick: () -> Unit, onLongClick: () -
 /**
  * メディア操作バー。文字色を明示し、背景の不透明度は設定(個別設定)で変えられる。
  * 大きさに応じて表示を切り替える: 極小=再生/停止のみ、小=3ボタン、通常=曲名+3ボタン(高さがあればアーティスト名も)。
+ * overlay=true なら、大きな3つのボタンを透かして背景に置き、曲名をその上に重ねて表示する(ボタンと文字は別の色)。
+ * buttonSp はボタンの大きさ(0=自動)。
  */
 @Composable
 private fun MediaBar(
     state: MediaHelper.State,
     media: MediaHelper,
     bgAlpha: Float,
+    buttonSp: Int,
+    overlay: Boolean,
     onRequestPermission: () -> Unit,
     onLongClick: () -> Unit,
 ) {
-    val onSurface = MaterialTheme.colorScheme.onSurface
+    val cs = MaterialTheme.colorScheme
+    val onSurface = cs.onSurface
     val shape = RoundedCornerShape(20.dp)
+    val titleText = if (!state.permitted) "曲名を表示するには通知アクセスを許可"
+    else state.title ?: if (state.hasSession) "再生中のメディア" else "メディアなし"
     BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .padding(4.dp)
             .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = bgAlpha))
+            .background(cs.surfaceContainerHigh.copy(alpha = bgAlpha))
             .combinedClickable(onClick = {}, onLongClick = onLongClick),
         contentAlignment = Alignment.CenterStart,
     ) {
         val w = maxWidth
         val h = maxHeight
-        val btnSize = (h.value * 0.45f).coerceIn(16f, 26f).sp
-        val showText = w >= 190.dp
         val showAll = w >= 110.dp
+        val btnSize = if (buttonSp > 0) buttonSp.sp else (h.value * 0.45f).coerceIn(16f, 26f).sp
+
+        if (overlay) {
+            // 文字色(onSurface)と輝度が離れた色をボタンに選び、文字と重なっても読めるようにする
+            val ink = onSurface.luminance()
+            val btnColor = listOf(cs.primary, cs.tertiary, cs.secondary, cs.inversePrimary)
+                .firstOrNull { abs(it.luminance() - ink) >= 0.35f }
+                ?: (if (ink > 0.5f) Color.Black else Color.White)
+            val big = if (buttonSp > 0) (buttonSp * 1.8f).sp else (h.value * 0.75f).coerceIn(28f, 56f).sp
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                val items = if (showAll) listOf("⏮", if (state.playing) "⏸" else "▶", "⏭") else listOf(if (state.playing) "⏸" else "▶")
+                items.forEachIndexed { i, label ->
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .fillMaxSize()
+                            .clickable {
+                                when {
+                                    !showAll || i == 1 -> media.playPause()
+                                    i == 0 -> media.previous()
+                                    else -> media.next()
+                                }
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) { Text(label, fontSize = big, color = btnColor.copy(alpha = 0.32f)) }
+                }
+            }
+            Column(
+                Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                val halo = TextStyle(shadow = Shadow(cs.surface, blurRadius = 10f))
+                Text(
+                    titleText,
+                    color = onSurface,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = halo,
+                    modifier = if (!state.permitted) Modifier.clickable(onClick = onRequestPermission) else Modifier,
+                )
+                if (h >= 56.dp && state.permitted) {
+                    state.artist?.let {
+                        Text(it, color = onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, style = halo)
+                    }
+                }
+            }
+            return@BoxWithConstraints
+        }
+
+        val showText = w >= 190.dp
         val showArtist = h >= 56.dp
         val colors = ButtonDefaults.textButtonColors(contentColor = onSurface)
         val pad = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
@@ -1225,14 +1463,14 @@ private fun MediaBar(
                 Column(Modifier.weight(1f).padding(end = 6.dp)) {
                     if (!state.permitted) {
                         Text(
-                            "曲名を表示するには通知アクセスを許可",
+                            titleText,
                             color = onSurface,
                             fontSize = 13.sp,
                             modifier = Modifier.clickable(onClick = onRequestPermission),
                         )
                     } else {
                         Text(
-                            state.title ?: if (state.hasSession) "再生中のメディア" else "メディアなし",
+                            titleText,
                             color = onSurface,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -1243,7 +1481,7 @@ private fun MediaBar(
                             state.artist?.let {
                                 Text(
                                     it,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = cs.onSurfaceVariant,
                                     fontSize = 12.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,

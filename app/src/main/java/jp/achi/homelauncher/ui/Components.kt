@@ -66,15 +66,26 @@ object IconCache {
     private val cache = LruCache<String, ImageBitmap>(400)
     private const val SIZE_PX = 192
 
+    /** アプリのアイコン。仕事用アプリは LauncherApps から(仕事用バッジ付きで)取得する。 */
+    private fun drawableOf(context: Context, app: AppInfo): Drawable? = runCatching {
+        if (app.work) {
+            val la = context.getSystemService(android.content.pm.LauncherApps::class.java)
+            val um = context.getSystemService(android.os.UserManager::class.java)
+            val user = um.getUserForSerialNumber(app.userSerial)
+            val i = la.getActivityList(app.packageName, user).firstOrNull { it.componentName.className == app.className }
+            i?.getBadgedIcon(0)
+        } else {
+            context.packageManager.getActivityIcon(android.content.ComponentName(app.packageName, app.className))
+        }
+    }.getOrNull()
+
     fun get(key: String): ImageBitmap? = cache.get(key)
 
     /** 形を指定するとき用。アダプティブアイコンの背景と前景を、標準マスクなしで全面に描く。 */
     fun loadFlat(context: Context, app: AppInfo): ImageBitmap? {
         val ck = "f:" + app.key
         cache.get(ck)?.let { return it }
-        val drawable: Drawable = runCatching {
-            context.packageManager.getActivityIcon(android.content.ComponentName(app.packageName, app.className))
-        }.getOrNull() ?: return null
+        val drawable: Drawable = drawableOf(context, app) ?: return null
         val bmp = runCatching {
             val s = SIZE_PX
             val b = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888)
@@ -96,9 +107,7 @@ object IconCache {
 
     fun load(context: Context, app: AppInfo): ImageBitmap? {
         cache.get(app.key)?.let { return it }
-        val drawable: Drawable = runCatching {
-            context.packageManager.getActivityIcon(android.content.ComponentName(app.packageName, app.className))
-        }.getOrNull() ?: return null
+        val drawable: Drawable = drawableOf(context, app) ?: return null
         val bmp = runCatching { drawable.toBitmap(SIZE_PX, SIZE_PX).asImageBitmap() }.getOrNull() ?: return null
         cache.put(app.key, bmp)
         return bmp

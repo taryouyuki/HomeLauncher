@@ -199,25 +199,44 @@ fun SettingsScreen(
                                 FilterChip(s.overlapPolicy == LauncherSettings.OVERLAP, { update { it.copy(overlapPolicy = LauncherSettings.OVERLAP) } }, { Text("そのまま被せる") })
                                 FilterChip(s.overlapPolicy == LauncherSettings.PUSH_DOWN, { update { it.copy(overlapPolicy = LauncherSettings.PUSH_DOWN) } }, { Text("既存を下へずらす") })
                                 FilterChip(s.overlapPolicy == LauncherSettings.PUSH_UP, { update { it.copy(overlapPolicy = LauncherSettings.PUSH_UP) } }, { Text("既存を上へずらす") })
+                                FilterChip(s.overlapPolicy == LauncherSettings.SHIFT, { update { it.copy(overlapPolicy = LauncherSettings.SHIFT) } }, { Text("押し出し(A B C→C A B)") })
                             }
                             SwitchRow("レイアウトをロック(長押し編集を無効化)", s.lockLayout) { v -> update { it.copy(lockLayout = v) } }
+                            SwitchRow("ホーム画面に「編集」ボタンを表示(長押し不要の編集モード)", s.showEditButton) { v -> update { it.copy(showEditButton = v) } }
                             SwitchRow("自由配置モード(マスに縛られず移動・サイズ変更)", s.freeMode) { v -> update { it.copy(freeMode = v) } }
                             Text(
                                 "オフに戻して項目を動かすと、再びマスに揃います。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline,
                             )
-                            OutlinedButton(
-                                onClick = {
-                                    val cellW = cfg.screenWidthDp.toFloat() / s.gridCols
-                                    val gridH = cfg.screenHeightDp - (if (s.showDock) s.dockHeightDp else 0) - 120f
-                                    vm.autoAdjust(cellW, gridH / s.gridRows)
-                                    toast(context, "大きさを合わせ、重なり・はみ出しを整えました")
-                                },
-                                modifier = Modifier.padding(top = 8.dp),
-                            ) { Text("表示を自動調整(AIなし)") }
+                            Section("自動調整(AIなし)")
+                            val cellW = cfg.screenWidthDp.toFloat() / s.gridCols
+                            val gridH = cfg.screenHeightDp - (if (s.showDock) s.dockHeightDp else 0) - 120f
+                            val cellH = gridH / s.gridRows
+                            val dens = context.resources.displayMetrics.density
+                            val spanOf: (jp.achi.homelauncher.data.HomeItem) -> Pair<Int, Int>? = { w ->
+                                widgets.findProvider(w.provider)?.let { widgets.suggestedSpan(it, cellW, cellH, dens) }
+                            }
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                OutlinedButton(onClick = {
+                                    vm.autoAdjust(cellW, cellH)
+                                    vm.autoAdjustWidgets(spanOf)
+                                    toast(context, "大きさと配置を自動調整しました")
+                                }) { Text("すべて") }
+                                OutlinedButton(onClick = {
+                                    vm.autoAdjustWidgets(spanOf)
+                                    toast(context, "ウィジェットの大きさを自動調整しました")
+                                }) { Text("ウィジェットのみ") }
+                                OutlinedButton(onClick = {
+                                    vm.autoAdjustIcons(cellW, cellH)
+                                    toast(context, "アイコン・文字・ドックの大きさを自動調整しました")
+                                }) { Text("アプリアイコンのみ") }
+                            }
                             Text(
-                                "アイコン・文字・ドックの大きさをセルに合わせ、重なりを空きマスへ移し、自由配置をマスに揃えます。",
+                                "アイコン: アイコン・文字・ドックの大きさをセルに合わせます。ウィジェット: 推奨(最小)サイズに合わせ、はみ出し・重なりを整えます。",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline,
                             )
@@ -245,6 +264,12 @@ fun SettingsScreen(
                             SwitchRow("ドックを表示", s.showDock) { v -> update { it.copy(showDock = v) } }
                             IntSliderRow("縦幅", s.dockHeightDp, 48, 160, "dp") { v -> update { it.copy(dockHeightDp = v) } }
                             IntSliderRow("1ページのアイコン数", s.dockCount, 3, 7) { v -> update { it.copy(dockCount = v) } }
+                            IntSliderRow("アイコンサイズ(ドック専用)", s.dockIconSizeDp, 24, 120, "dp") { v -> update { it.copy(dockIconSizeDp = v) } }
+                            Text(
+                                "ドックのアイコンは、長押ししたまま左右に動かして並び替えできます(間のアイコンは1つずつずれます)。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
                             PercentSliderRow("アイコンの不透明度(ドック専用)", s.dockIconAlpha, 0.1f, 1f) { v -> update { it.copy(dockIconAlpha = v) } }
                             SwitchRow("最後のページの次は最初に戻る", s.dockLoop) { v -> update { it.copy(dockLoop = v) } }
                         }
@@ -260,6 +285,13 @@ fun SettingsScreen(
                             Section("検索バー・メディアバー")
                             PercentSliderRow("検索バーの不透明度", s.searchBarAlpha, 0.1f, 1f) { v -> update { it.copy(searchBarAlpha = v) } }
                             PercentSliderRow("メディアバーの不透明度", s.mediaBarAlpha, 0.1f, 1f) { v -> update { it.copy(mediaBarAlpha = v) } }
+                            SwitchRow("ボタンの大きさを自動にする", s.mediaButtonSp == 0) { v ->
+                                update { it.copy(mediaButtonSp = if (v) 0 else 22) }
+                            }
+                            if (s.mediaButtonSp > 0) {
+                                IntSliderRow("ボタンの大きさ", s.mediaButtonSp, 14, 44, "sp") { v -> update { it.copy(mediaButtonSp = v) } }
+                            }
+                            SwitchRow("ボタンを透かして曲名を重ねて表示", s.mediaOverlay) { v -> update { it.copy(mediaOverlay = v) } }
                             Section("メディア操作")
                             Text(
                                 if (mediaState.permitted) "通知アクセス: 許可済み(曲名の表示と操作が可能)"

@@ -7,7 +7,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,14 +42,17 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppSorter
 import jp.achi.homelauncher.data.Folder
 import jp.achi.homelauncher.data.SortMode
 
-/** ホーム/ドック上のフォルダアイコン(中のアプリを最大4つ並べて表示)。 */
+/** ホーム/ドック上のフォルダアイコン。やわらかい半透明の角丸の中に、中のアプリを3×3まで並べて表示する。 */
 @Composable
 fun FolderTile(
     folder: Folder,
@@ -68,19 +73,26 @@ fun FolderTile(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        val corner = (iconSizeDp * 0.30f).dp
         Box(
             Modifier
                 .size(iconSizeDp.dp)
-                .clip(RoundedCornerShape((iconSizeDp * 0.24f).dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f * iconAlpha))
-                .padding((iconSizeDp * 0.08f).dp),
+                .clip(RoundedCornerShape(corner))
+                .background(Color.White.copy(alpha = 0.32f * iconAlpha))
+                .border(1.dp, Color.White.copy(alpha = 0.45f * iconAlpha), RoundedCornerShape(corner))
+                .padding((iconSizeDp * 0.09f).dp),
+            contentAlignment = Alignment.Center,
         ) {
-            val mini = (iconSizeDp * 0.36f).toInt().coerceAtLeast(12)
-            val shown = folder.apps.mapNotNull { appMap[it] }.take(4)
+            val mini = (iconSizeDp * 0.25f).toInt().coerceAtLeast(10)
+            val shown = folder.apps.mapNotNull { appMap[it] }.take(9)
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
-                shown.chunked(2).forEach { row ->
+                for (r in 0 until 3) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        row.forEach { AppIcon(it, mini, Modifier.alpha(iconAlpha)) }
+                        for (c in 0 until 3) {
+                            val app = shown.getOrNull(r * 3 + c)
+                            if (app != null) AppIcon(app, mini, Modifier.alpha(iconAlpha))
+                            else Spacer(Modifier.size(mini.dp))
+                        }
                     }
                 }
             }
@@ -100,7 +112,10 @@ fun FolderTile(
     }
 }
 
-/** フォルダを開いたときのダイアログ。アプリの起動・追加・取り出し、名前変更、フォルダ削除ができる。 */
+/**
+ * フォルダを開いた画面。画面中央の大きな丸い枠に、フォルダ名と、大きめのアイコンを4列で表示する。
+ * 名前をタップで変更、アイコン長押しで「ホームに出す/外す」、下のボタンでアプリ追加・フォルダ削除。
+ */
 @Composable
 fun FolderDialog(
     folder: Folder,
@@ -120,42 +135,65 @@ fun FolderDialog(
     var showRename by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
     val members = folder.apps.mapNotNull { appMap[it] }
+    val ink = MaterialTheme.colorScheme.onSurface
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text(folder.name) },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
-        text = {
-            Column {
-                if (members.isEmpty()) {
-                    Text("アプリがありません。「アプリを追加」から入れてください。", modifier = Modifier.padding(vertical = 8.dp))
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
-                        modifier = Modifier.heightIn(max = 300.dp),
-                    ) {
-                        items(members, key = { it.key }) { app ->
-                            AppCell(
-                                app = app,
-                                iconSizeDp = iconSizeDp,
-                                showLabel = true,
-                                labelSizeSp = labelSizeSp,
-                                onWallpaper = false,
-                                modifier = Modifier.padding(vertical = 6.dp),
-                                onClick = { onLaunch(app) },
-                                onLongClick = { menuApp = app },
-                            )
-                        }
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth(0.92f)
+                .clip(RoundedCornerShape(32.dp))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+                .padding(horizontal = 16.dp, vertical = 18.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                folder.name,
+                color = ink,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { showRename = true }
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+            )
+            if (members.isEmpty()) {
+                Text(
+                    "アプリがありません。下の「アプリを追加」から入れてください。",
+                    color = ink,
+                    modifier = Modifier.padding(vertical = 24.dp),
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(4),
+                    modifier = Modifier.heightIn(max = 380.dp).padding(top = 10.dp),
+                ) {
+                    items(members, key = { it.key }) { app ->
+                        AppCell(
+                            app = app,
+                            iconSizeDp = iconSizeDp,
+                            showLabel = true,
+                            labelSizeSp = labelSizeSp,
+                            onWallpaper = false,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            onClick = { onLaunch(app) },
+                            onLongClick = { menuApp = app },
+                        )
                     }
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    TextButton(onClick = { showPicker = true }) { Text("アプリを追加") }
-                    TextButton(onClick = { showRename = true }) { Text("名前変更") }
-                    TextButton(onClick = onDelete) { Text("フォルダ削除") }
-                }
             }
-        },
-    )
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                TextButton(onClick = { showPicker = true }) { Text("アプリを追加") }
+                TextButton(onClick = onDelete) { Text("フォルダ削除") }
+                TextButton(onClick = onDismiss) { Text("閉じる") }
+            }
+        }
+    }
 
     if (showPicker) {
         AppPickerDialog(

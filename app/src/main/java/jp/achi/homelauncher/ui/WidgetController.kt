@@ -133,6 +133,19 @@ class WidgetController(context: Context) {
         p.onCancel()
     }
 
+    /**
+     * ウィジェットに合う大きさ(マス数)。Android 12+ の推奨サイズがあればそれを、なければ最小サイズから決める。
+     * cellWdp/cellHdp は1マスの大きさ(dp)。
+     */
+    fun suggestedSpan(info: AppWidgetProviderInfo, cellWdp: Float, cellHdp: Float, density: Float): Pair<Int, Int> {
+        if (android.os.Build.VERSION.SDK_INT >= 31 && info.targetCellWidth > 0 && info.targetCellHeight > 0) {
+            return info.targetCellWidth to info.targetCellHeight
+        }
+        val w = kotlin.math.ceil((info.minWidth / density) / cellWdp).toInt().coerceAtLeast(1)
+        val h = kotlin.math.ceil((info.minHeight / density) / cellHdp).toInt().coerceAtLeast(1)
+        return w to h
+    }
+
     fun findProvider(flattened: String): AppWidgetProviderInfo? =
         providers().firstOrNull { it.provider.flattenToString() == flattened }
 

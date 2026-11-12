@@ -14,8 +14,12 @@ data class AppInfo(
     val updatedAt: Long,
     /** 初回インストール日時(ダウンロード順の並び替え用) */
     val installedAt: Long = 0L,
+    /** 仕事用プロファイル(Island など)のアプリか */
+    val work: Boolean = false,
+    /** work=true のとき、プロファイルのユーザー識別番号 */
+    val userSerial: Long = 0L,
 ) {
-    val key: String get() = "$packageName/$className"
+    val key: String get() = if (work) "w$userSerial:$packageName/$className" else "$packageName/$className"
 }
 
 /** 名前順 / 最終起動順 / ダウンロード(インストール)順 / よく使う順(起動回数) / 更新順 */
@@ -218,6 +222,7 @@ object GridLogic {
         mover: HomeItem,
         policy: String,
         rows: Int,
+        cols: Int = 4,
     ): Pair<List<HomeItem>, Boolean> {
         val result = items.filter { it.id != mover.id }.toMutableList()
         result.add(mover)
@@ -226,14 +231,19 @@ object GridLogic {
                 overlaps(it, cur.x, cur.y, cur.spanX, cur.spanY)
         }
         val collided = hits(mover).isNotEmpty()
-        if (collided && (policy == "push_down" || policy == "push_up")) {
+        if (collided && policy == "shift" && !mover.free && mover.spanX == 1 && mover.spanY == 1) {
+            val shifted = shiftInsert(items.filter { it.id != mover.id }, mover, cols, rows)
+            if (shifted != null) return shifted to true
+        }
+        val pol = if (policy == "shift") "push_down" else policy
+        if (collided && (pol == "push_down" || pol == "push_up")) {
             val pending = ArrayDeque<HomeItem>()
             pending.add(mover)
             var guard = 0
             while (pending.isNotEmpty() && guard++ < 300) {
                 val cur = pending.removeFirst()
                 for (h in hits(cur)) {
-                    val ny = if (policy == "push_down") {
+                    val ny = if (pol == "push_down") {
                         (cur.y + cur.spanY).coerceAtMost((rows - h.spanY).coerceAtLeast(0))
                     } else {
                         (cur.y - h.spanY).coerceAtLeast(0)
@@ -246,6 +256,28 @@ object GridLogic {
             }
         }
         return result to collided
+    }
+
+    /**
+     * 押し出し(挿入)。mover を置く位置から行方向(左→右、次の行へ)に、連続して埋まっているアイコンを
+     * 1つずつ後ろへずらして空きを作る。A B C で C を先頭に置くと C A B になる。
+     * 1マスのアイコン以外(ウィジェット等)にぶつかる、または空きが無い場合は null(呼び出し側で別の方法にする)。
+     */
+    fun shiftInsert(others: List<HomeItem>, mover: HomeItem, cols: Int, rows: Int): List<HomeItem>? {
+        val total = cols * rows
+        val page = others.filter { it.parent.isEmpty() && !it.free && it.page == mover.page }
+        fun at(c: Int): HomeItem? = page.firstOrNull { overlaps(it, c % cols, c / cols, 1, 1) }
+        val chain = mutableListOf<HomeItem>()
+        var cur = mover.y * cols + mover.x
+        while (cur < total) {
+            val h = at(cur) ?: break
+            if (h.spanX != 1 || h.spanY != 1) return null
+            chain.add(h)
+            cur++
+        }
+        if (cur >= total) return null
+        val moved = chain.associate { it.id to it.copy(x = (it.y * cols + it.x + 1) % cols, y = (it.y * cols + it.x + 1) / cols) }
+        return others.map { moved[it.id] ?: it } + mover
     }
 
     /** グリッドサイズが縮んでも画面内に収まるよう補正した表示用コピーを返す。 */
@@ -284,6 +316,7 @@ object AutoLayout {
             iconSizeDp = icon,
             labelSizeSp = label,
             dockHeightDp = dock,
+            dockIconSizeDp = icon,
             drawerIconSizeDp = icon.coerceIn(40, 72),
         )
     }

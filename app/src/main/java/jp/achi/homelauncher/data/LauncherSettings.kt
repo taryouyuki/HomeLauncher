@@ -29,11 +29,18 @@ data class LauncherSettings(
     val dockCount: Int = 5,
     val dockHeightDp: Int = 72,
     val dockIconAlpha: Float = 1f,
+    val dockIconSizeDp: Int = 56,
     /** 最後のページからさらに進むと最初のページに戻る */
     val dockLoop: Boolean = true,
     // 検索バー・メディアバー(個別設定がなければこの不透明度)
     val searchBarAlpha: Float = 0.92f,
     val mediaBarAlpha: Float = 0.97f,
+    /** メディアバーのボタンの大きさ(sp)。0 なら自動 */
+    val mediaButtonSp: Int = 0,
+    /** ボタンを透かして、曲名をその上に重ねて表示する */
+    val mediaOverlay: Boolean = false,
+    /** ホーム画面に「編集」ボタンを表示する(長押しなしで編集モードに入る) */
+    val showEditButton: Boolean = true,
     // アプリ一覧
     val drawerCols: Int = 4,
     val drawerIconSizeDp: Int = 52,
@@ -75,6 +82,10 @@ data class LauncherSettings(
         put("dockCount", dockCount)
         put("dockHeightDp", dockHeightDp)
         put("dockIconAlpha", dockIconAlpha.toDouble())
+        put("dockIconSizeDp", dockIconSizeDp)
+        put("mediaButtonSp", mediaButtonSp)
+        put("mediaOverlay", mediaOverlay)
+        put("showEditButton", showEditButton)
         put("dockLoop", dockLoop)
         put("searchBarAlpha", searchBarAlpha.toDouble())
         put("mediaBarAlpha", mediaBarAlpha.toDouble())
@@ -100,7 +111,9 @@ data class LauncherSettings(
         const val OVERLAP = "overlap"
         const val PUSH_DOWN = "push_down"
         const val PUSH_UP = "push_up"
-        val SHAPES = setOf("original", "circle", "squircle", "rounded", "wobbly", "pentagon", "hexagon", "octagon", "flower")
+        /** 押し出し: 重なった位置から後ろのアイコンを1つずつずらす(A B C → C A B) */
+        const val SHIFT = "shift"
+        val SHAPES = setOf("original", "circle", "squircle", "rounded", "wobbly", "pentagon", "hexagon", "octagon", "flower", "heart")
         val DEFAULT_HOME_COLOR: Int = 0xFFF48FB1.toInt()
         val DEFAULT_DRAWER_COLOR: Int = 0xFFFFFFFF.toInt()
 
@@ -129,11 +142,15 @@ data class LauncherSettings(
                 showBadges = o.optBoolean("showBadges", d.showBadges),
                 fontFile = o.optString("fontFile", d.fontFile).filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' },
                 fontName = o.optString("fontName", d.fontName).take(60),
-                overlapPolicy = oneOf(o.optString("overlapPolicy", d.overlapPolicy), setOf(OVERLAP, PUSH_DOWN, PUSH_UP), d.overlapPolicy),
+                overlapPolicy = oneOf(o.optString("overlapPolicy", d.overlapPolicy), setOf(OVERLAP, PUSH_DOWN, PUSH_UP, SHIFT), d.overlapPolicy),
                 showDock = o.optBoolean("showDock", d.showDock),
                 dockCount = o.optInt("dockCount", d.dockCount).coerceIn(3, 7),
                 dockHeightDp = o.optInt("dockHeightDp", d.dockHeightDp).coerceIn(48, 160),
                 dockIconAlpha = o.alpha("dockIconAlpha", d.dockIconAlpha, 0.1f),
+                dockIconSizeDp = o.optInt("dockIconSizeDp", d.dockIconSizeDp).coerceIn(24, 120),
+                mediaButtonSp = o.optInt("mediaButtonSp", d.mediaButtonSp).let { if (it <= 0) 0 else it.coerceIn(14, 44) },
+                mediaOverlay = o.optBoolean("mediaOverlay", d.mediaOverlay),
+                showEditButton = o.optBoolean("showEditButton", d.showEditButton),
                 dockLoop = o.optBoolean("dockLoop", d.dockLoop),
                 searchBarAlpha = o.alpha("searchBarAlpha", d.searchBarAlpha, 0.1f),
                 mediaBarAlpha = o.alpha("mediaBarAlpha", d.mediaBarAlpha, 0.1f),

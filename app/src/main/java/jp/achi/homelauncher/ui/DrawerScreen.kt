@@ -66,7 +66,10 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val settings by vm.settings.collectAsStateWithLifecycle()
-    val apps by vm.apps.collectAsStateWithLifecycle()
+    val personalApps by vm.apps.collectAsStateWithLifecycle()
+    val workApps by vm.workApps.collectAsStateWithLifecycle()
+    var showWork by remember { mutableStateOf(false) }
+    val apps = if (showWork) workApps else personalApps
     val counts by vm.counts.collectAsStateWithLifecycle()
     val lastLaunch by vm.lastLaunch.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
@@ -151,6 +154,12 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 SortChip("ダウンロード順", settings.drawerSort == SortMode.INSTALL) { vm.setDrawerSort(SortMode.INSTALL) }
                 SortChip("よく使う順", settings.drawerSort == SortMode.FREQUENT) { vm.setDrawerSort(SortMode.FREQUENT) }
                 SortChip("更新順", settings.drawerSort == SortMode.UPDATED) { vm.setDrawerSort(SortMode.UPDATED) }
+                // 仕事用プロファイル(Island など)のアプリだけを表示する
+                FilterChip(
+                    selected = showWork,
+                    onClick = { showWork = !showWork },
+                    label = { Text("仕事用(${workApps.size})") },
+                )
             }
 
             LazyVerticalGrid(
@@ -170,7 +179,7 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                             SortMode.LAST_LAUNCH -> lastLaunch[app.key]?.let { dateTimeFmt.format(Date(it)) } ?: "未起動"
                             SortMode.INSTALL -> dateFmt.format(Date(app.installedAt))
                             SortMode.FREQUENT -> "${counts[app.key] ?: 0}回"
-                            SortMode.UPDATED -> dateFmt.format(Date(app.updatedAt))
+                            SortMode.UPDATED -> if (app.work) null else dateFmt.format(Date(app.updatedAt))
                         },
                         modifier = Modifier.padding(vertical = 8.dp),
                         onClick = {
@@ -179,7 +188,7 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                         },
                         onLongClick = {
                             if (settings.haptics) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            menuApp = app
+                            if (app.work) toast(context, "仕事用アプリはここから起動できます") else menuApp = app
                         },
                     )
                 }

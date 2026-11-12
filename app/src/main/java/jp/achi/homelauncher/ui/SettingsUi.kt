@@ -197,7 +197,7 @@ fun LauncherPreview(s: LauncherSettings, drawer: Boolean, modifier: Modifier = M
 
                 // ドック
                 box(8f, dockTop, 344f, dockH, 28f, dockBg)
-                val dsz = min(s.iconSizeDp.toFloat(), dockH - 8f).coerceAtLeast(10f)
+                val dsz = min(s.dockIconSizeDp.toFloat(), dockH - 8f).coerceAtLeast(10f)
                 for (i in 0 until s.dockCount) {
                     val cx = 8f + (344f / s.dockCount) * (i + 0.5f)
                     box(cx - dsz / 2f, dockTop + (dockH - dsz) / 2f, dsz, dsz, dsz * 0.24f, ICON_COLORS[i % ICON_COLORS.size].copy(alpha = s.dockIconAlpha))

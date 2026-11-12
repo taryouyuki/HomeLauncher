@@ -26,6 +26,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     val repo = AppRepository(app)
 
     val apps = repo.apps
+    val workApps = repo.workApps
     val settings = MutableStateFlow(prefs.loadSettings())
     val items = MutableStateFlow(prefs.loadItems())
     val folders = MutableStateFlow(prefs.loadFolders())
@@ -93,6 +94,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     fun overlapMessage(): String = when (settings.value.overlapPolicy) {
         LauncherSettings.PUSH_DOWN -> "既にあるアイテムを下にずらして配置しました"
         LauncherSettings.PUSH_UP -> "既にあるアイテムを上にずらして配置しました"
+        LauncherSettings.SHIFT -> "既にあるアイテムを順番に押し出して配置しました"
         else -> "既にあるアイテムの上に重ねて配置しました"
     }
 
@@ -104,7 +106,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         val fixed = GridLogic.clamp(item, s.gridCols, s.gridRows)
             .let { it.copy(page = it.page.coerceIn(0, s.pageCount - 1)) }
-        val (list, collided) = GridLogic.placeWithPolicy(items.value, fixed, s.overlapPolicy, s.gridRows)
+        val (list, collided) = GridLogic.placeWithPolicy(items.value, fixed, s.overlapPolicy, s.gridRows, s.gridCols)
         items.value = list
         persistItems()
         return collided
@@ -175,6 +177,66 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         val fixed = GridLogic.clamp(item.copy(free = true, page = item.page.coerceIn(0, s.pageCount - 1)), s.gridCols, s.gridRows)
         items.update { list -> list.filter { it.id != fixed.id } + fixed }
+        persistItems()
+    }
+
+    /** ドックの並び替え。from の項目を to の位置へ挿入する(間の項目は1つずつずれる)。 */
+    fun moveDockEntry(from: Int, to: Int) {
+        dock.update { list ->
+            if (from !in list.indices) return@update list
+            val m = list.toMutableList()
+            val e = m.removeAt(from)
+            m.add(to.coerceIn(0, m.size), e)
+            m
+        }
+        prefs.saveDock(dock.value)
+    }
+
+    /** スタック内のウィジェットの並び替え。delta=-1 で前へ、+1 で後ろへ。 */
+    fun moveStackChild(childId: String, delta: Int) {
+        val list = items.value
+        val child = list.firstOrNull { it.id == childId } ?: return
+        val siblings = list.filter { it.parent == child.parent }
+        val i = siblings.indexOfFirst { it.id == childId }
+        val j = i + delta
+        if (i < 0 || j !in siblings.indices) return
+        val a = siblings[i]
+        val b = siblings[j]
+        items.value = list.map {
+            when (it.id) {
+                a.id -> b
+                b.id -> a
+                else -> it
+            }
+        }
+        persistItems()
+    }
+
+    /** アイコン・文字・ドックの大きさだけを自動調整する(ウィジェットや配置は変えない)。 */
+    fun autoAdjustIcons(cellWdp: Float, cellHdp: Float) {
+        updateSettings { AutoLayout.fitSettings(it, cellWdp, cellHdp) }
+    }
+
+    /**
+     * ウィジェットだけを自動調整する。各ウィジェットを、提供元が示す最小サイズに合う大きさに直し、
+     * はみ出し・重なりを整える(アイコンの大きさ等は変えない)。minSpan は (最小の幅マス, 高さマス) を返す。
+     */
+    fun autoAdjustWidgets(minSpan: (HomeItem) -> Pair<Int, Int>?) {
+        val s = settings.value
+        items.update { list ->
+            val resized = list.map { w ->
+                if (w.parent.isNotEmpty() || (w.type != HomeItem.WIDGET && w.type != HomeItem.STACK)) w
+                else {
+                    val span = if (w.type == HomeItem.STACK) {
+                        val kids = list.filter { it.parent == w.id }.mapNotNull(minSpan)
+                        if (kids.isEmpty()) null else kids.maxOf { it.first } to kids.maxOf { it.second }
+                    } else minSpan(w)
+                    if (span == null) w
+                    else w.copy(free = false, spanX = span.first.coerceIn(1, s.gridCols), spanY = span.second.coerceIn(1, s.gridRows))
+                }
+            }
+            AutoLayout.tidy(resized, s.gridCols, s.gridRows, s.pageCount)
+        }
         persistItems()
     }
 
