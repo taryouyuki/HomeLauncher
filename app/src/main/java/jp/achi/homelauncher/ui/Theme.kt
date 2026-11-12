@@ -13,7 +13,47 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material3.Typography
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import jp.achi.homelauncher.data.LauncherSettings
+import java.io.File
+
+/** 設定で追加したフォント(アプリ内に保存したファイル)。無い・壊れている場合は null(標準)。 */
+@Composable
+fun rememberCustomFont(settings: LauncherSettings): FontFamily? {
+    val context = LocalContext.current
+    return remember(settings.fontFile) {
+        if (settings.fontFile.isEmpty()) null
+        else runCatching {
+            val f = File(File(context.filesDir, "fonts"), settings.fontFile)
+            if (f.exists()) FontFamily(Font(f)) else null
+        }.getOrNull()
+    }
+}
+
+fun Typography.withFont(family: FontFamily?): Typography {
+    if (family == null) return this
+    return Typography(
+        displayLarge = displayLarge.copy(fontFamily = family),
+        displayMedium = displayMedium.copy(fontFamily = family),
+        displaySmall = displaySmall.copy(fontFamily = family),
+        headlineLarge = headlineLarge.copy(fontFamily = family),
+        headlineMedium = headlineMedium.copy(fontFamily = family),
+        headlineSmall = headlineSmall.copy(fontFamily = family),
+        titleLarge = titleLarge.copy(fontFamily = family),
+        titleMedium = titleMedium.copy(fontFamily = family),
+        titleSmall = titleSmall.copy(fontFamily = family),
+        bodyLarge = bodyLarge.copy(fontFamily = family),
+        bodyMedium = bodyMedium.copy(fontFamily = family),
+        bodySmall = bodySmall.copy(fontFamily = family),
+        labelLarge = labelLarge.copy(fontFamily = family),
+        labelMedium = labelMedium.copy(fontFamily = family),
+        labelSmall = labelSmall.copy(fontFamily = family),
+    )
+}
 
 @Composable
 fun HomeLauncherTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
@@ -29,7 +69,8 @@ fun HomeLauncherTheme(settings: LauncherSettings, content: @Composable () -> Uni
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
-    MaterialTheme(colorScheme = scheme, content = content)
+    val font = rememberCustomFont(settings)
+    MaterialTheme(colorScheme = scheme, typography = Typography().withFont(font), content = content)
 }
 
 /**
@@ -39,7 +80,7 @@ fun HomeLauncherTheme(settings: LauncherSettings, content: @Composable () -> Uni
 @Composable
 fun HomeColorTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
     if (settings.homeColorMode != "custom") {
-        content()
+        CompositionLocalProvider(LocalIconShape provides settings.iconShape) { content() }
         return
     }
     val dark = when (settings.homeDarkTheme) {
@@ -47,7 +88,13 @@ fun HomeColorTheme(settings: LauncherSettings, content: @Composable () -> Unit) 
         "light" -> false
         else -> isSystemInDarkTheme()
     }
-    MaterialTheme(colorScheme = customColorScheme(Color(settings.homeColor), dark), content = content)
+    val font = rememberCustomFont(settings)
+    MaterialTheme(
+        colorScheme = customColorScheme(Color(settings.homeColor), dark),
+        typography = Typography().withFont(font),
+    ) {
+        CompositionLocalProvider(LocalIconShape provides settings.iconShape) { content() }
+    }
 }
 
 /** 1色(シード)から、ライト/ダークの配色を簡易的に作る。 */

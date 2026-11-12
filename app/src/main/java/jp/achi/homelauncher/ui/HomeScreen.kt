@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -93,6 +95,7 @@ import jp.achi.homelauncher.data.HomeItem
 import jp.achi.homelauncher.data.LauncherSettings
 import jp.achi.homelauncher.data.PlaceResult
 import jp.achi.homelauncher.data.SortMode
+import jp.achi.homelauncher.media.BadgeStore
 import jp.achi.homelauncher.media.MediaHelper
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -115,6 +118,10 @@ private class HomeEnv(
     val onOpenFolder: (String) -> Unit,
     val onOpenSearch: () -> Unit,
     val onRequestNotificationAccess: () -> Unit,
+    val editing: Boolean,
+    val badges: Map<String, List<BadgeStore.Notif>>,
+    val onDoubleTap: (String) -> Unit,
+    val onBadgeMenu: (HomeItem) -> Unit,
 )
 
 @Composable
@@ -140,6 +147,8 @@ fun HomeScreen(
     val pending by vm.pendingRebind.collectAsStateWithLifecycle()
     val mediaState by media.state.collectAsStateWithLifecycle()
     val appMap = remember(apps) { apps.associateBy { it.key } }
+    val badges by BadgeStore.notifs.collectAsStateWithLifecycle()
+    val yomi by vm.yomi.collectAsStateWithLifecycle()
 
     var selectedId by remember { mutableStateOf<String?>(null) }
     var carrying by remember { mutableStateOf(false) }
@@ -162,6 +171,14 @@ fun HomeScreen(
     var dockAppPickIndex by remember { mutableStateOf<Int?>(null) }
     var dockMenuIndex by remember { mutableStateOf<Int?>(null) }
     var cellDp by remember { mutableStateOf(80f to 80f) }
+    /** 通知を見る対象のアプリ項目(メニュー → 通知一覧) */
+    var badgeMenuItem by remember { mutableStateOf<HomeItem?>(null) }
+    var notifPkg by remember { mutableStateOf<String?>(null) }
+    /** ダブルタップ設定: 対象アプリ選択 → ショートカット選択 */
+    var dtapItemId by remember { mutableStateOf<String?>(null) }
+    var dtapApp by remember { mutableStateOf<AppInfo?>(null) }
+    /** 値が変わるとウィジェット等を作り直して画面を更新する */
+    var refreshTick by remember { mutableIntStateOf(0) }
 
     val pagerState = rememberPagerState(pageCount = { settings.pageCount })
     val selectedItem = items.firstOrNull { it.id == selectedId }
@@ -274,7 +291,7 @@ fun HomeScreen(
             }
         }
         val stored = vm.items.value.firstOrNull { it.id == sel.id } ?: return
-        val collided = vm.placeAndResolve(stored.copy(page = page, x = nx, y = ny, spanX = nsx, spanY = nsy))
+        val collided = vm.placeAndResolve(stored.copy(page = page, x = nx, y = ny, spanX = nsx, spanY = nsy, free = false))
         if (collided) toast(context, vm.overlapMessage())
     }
 
@@ -296,6 +313,10 @@ fun HomeScreen(
         onOpenFolder = { openFolderId = it },
         onOpenSearch = { searchOpen = true },
         onRequestNotificationAccess = onRequestNotificationAccess,
+        editing = selectedId != null,
+        badges = badges,
+        onDoubleTap = { code -> launchDtap(context, vm, appMap, code) },
+        onBadgeMenu = { badgeMenuItem = it },
     )
 
     Box(
@@ -358,7 +379,7 @@ fun HomeScreen(
                             },
                     ) {
                         for (item in shown) {
-                            key(item.id) { GridItem(item, env, cellW, cellH) }
+                            key(item.id, refreshTick) { GridItem(item, env, cellW, cellH) }
                         }
                     }
                 }
@@ -374,6 +395,7 @@ fun HomeScreen(
                         rows = rows,
                         viewportWpx = viewportWpx,
                         carrying = carrying,
+                        freeMode = settings.freeMode,
                         onCarry = { carrying = it },
                         onEdge = { dir ->
                             scope.launch {
@@ -382,7 +404,14 @@ fun HomeScreen(
                                 )
                             }
                         },
-                    ) { nx, ny, nsx, nsy -> commitMove(sel, pagerState.currentPage, nx, ny, nsx, nsy) }
+                        onCommit = { nx, ny, nsx, nsy -> commitMove(sel, pagerState.currentPage, nx, ny, nsx, nsy) },
+                        onCommitFree = { fx, fy, fw, fh ->
+                            val stored = vm.items.value.firstOrNull { it.id == sel.id }
+                            if (stored != null) {
+                                vm.placeFree(stored.copy(page = pagerState.currentPage, fx = fx, fy = fy, fw = fw, fh = fh))
+                            }
+                        },
+                    )
                 }
             }
 
@@ -457,6 +486,18 @@ fun HomeScreen(
                     if (selectedItem.type == HomeItem.APP) {
                         TextButton(onClick = { folderPickItem = selectedItem }) { Text("フォルダへ") }
                     }
+                    if (selectedItem.type == HomeItem.WIDGET) {
+                        TextButton(onClick = {
+                            if (vm.convertWidgetToStack(selectedItem.id)) {
+                                toast(context, "ウィジェットスタックに変換しました(長押し →「スタック管理」で追加)")
+                            }
+                        }) { Text("スタックに変換") }
+                    }
+                    if (selectedItem.type == HomeItem.APP || selectedItem.type == HomeItem.SHORTCUT) {
+                        TextButton(onClick = { dtapItemId = selectedItem.id }) {
+                            Text(if (selectedItem.dtap.isEmpty()) "ダブルタップ設定" else "ダブルタップ設定(設定済)")
+                        }
+                    }
                     if (selectedItem.type == HomeItem.STACK) {
                         TextButton(onClick = { stackManageId = selectedItem.id }) { Text("スタック管理") }
                     }
@@ -469,6 +510,7 @@ fun HomeScreen(
         if (searchOpen) {
             SearchOverlay(
                 apps = apps,
+                yomi = yomi,
                 searchUrl = settings.searchUrl,
                 onLaunch = {
                     searchOpen = false
@@ -513,6 +555,18 @@ fun HomeScreen(
                     report(vm.addSpecial(HomeItem.MEDIA, at))
                 })
             }
+            add("画面を更新(ウィジェット・アプリ・通知)" to {
+                emptyMenu = false
+                refreshAll(vm, widgets, media)
+                refreshTick++
+                toast(context, "画面を更新しました")
+            })
+            add("表示を自動調整(大きさ・重なりを整える)" to {
+                emptyMenu = false
+                vm.autoAdjust(cellDp.first, cellDp.second)
+                refreshTick++
+                toast(context, "アイコン・文字の大きさを合わせ、重なりを整えました")
+            })
             add("壁紙を変更" to {
                 emptyMenu = false
                 runCatching {
@@ -528,6 +582,79 @@ fun HomeScreen(
             })
         }
         MenuDialog(title = "ホーム画面", entries = entries, onDismiss = { emptyMenu = false })
+    }
+
+    badgeMenuItem?.let { item ->
+        val app = appMap[item.appKey]
+        MenuDialog(
+            title = app?.label ?: "アプリ",
+            entries = listOf(
+                "通知を見る" to {
+                    badgeMenuItem = null
+                    notifPkg = item.pkg
+                },
+                "移動・編集" to {
+                    badgeMenuItem = null
+                    select(item.id)
+                },
+            ),
+            onDismiss = { badgeMenuItem = null },
+        )
+    }
+
+    notifPkg?.let { pkg ->
+        NotificationsDialog(
+            pkg = pkg,
+            appLabel = appMap.values.firstOrNull { it.packageName == pkg }?.label ?: pkg,
+            notifs = badges[pkg].orEmpty(),
+            onDismiss = { notifPkg = null },
+        )
+    }
+
+    dtapItemId?.let { id ->
+        val target = items.firstOrNull { it.id == id }
+        if (target == null) {
+            dtapItemId = null
+        } else if (dtapApp == null) {
+            AppPickerDialog(
+                apps = AppSorter.sort(apps, SortMode.NAME, emptyMap()),
+                onPick = { dtapApp = it },
+                onDismiss = { dtapItemId = null },
+            )
+        } else {
+            val app = dtapApp!!
+            val shortcuts = remember(app.key) { ShortcutHelper.list(context, app.packageName) }
+            MenuDialog(
+                title = "「${app.label}」のどれを開く?",
+                entries = buildList {
+                    add("アプリ本体" to {
+                        vm.updateItem(id) { it.copy(dtap = "app:${app.key}") }
+                        dtapItemId = null
+                        dtapApp = null
+                        toast(context, "ダブルタップで「${app.label}」を開きます")
+                    })
+                    shortcuts.forEach { (sid, label) ->
+                        add(label to {
+                            vm.updateItem(id) { it.copy(dtap = "sc:${app.packageName}|$sid") }
+                            dtapItemId = null
+                            dtapApp = null
+                            toast(context, "ダブルタップで「$label」を開きます")
+                        })
+                    }
+                    if (target.dtap.isNotEmpty()) {
+                        add("ダブルタップ設定を解除" to {
+                            vm.updateItem(id) { it.copy(dtap = "") }
+                            dtapItemId = null
+                            dtapApp = null
+                        })
+                    }
+                },
+                onDismiss = {
+                    dtapItemId = null
+                    dtapApp = null
+                },
+            )
+        }
     }
 
     editItem?.let { item ->
@@ -727,26 +854,37 @@ fun HomeScreen(
     }
 }
 
-/** グリッド上の1項目。セル座標をDpに変換して配置する。 */
+/** グリッド上の1項目。セル座標(自由配置なら小数のセル座標)をDpに変換して配置する。 */
 @Composable
 private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
     val s = env.settings
-    val w = cellW * item.spanX
-    val h = cellH * item.spanY
-    val single = item.spanX == 1 && item.spanY == 1
-    val iconDp = if (single) min(s.iconSizeDp, (cellW.value - 8f).toInt()).coerceAtLeast(24)
-    else (min(w.value, h.value) * 0.6f).toInt().coerceAtLeast(24)
+    val px = if (item.free) item.fx else item.x.toFloat()
+    val py = if (item.free) item.fy else item.y.toFloat()
+    val w = if (item.free) cellW * item.fw else cellW * item.spanX
+    val h = if (item.free) cellH * item.fh else cellH * item.spanY
+    val single = if (item.free) item.fw <= 1.01f && item.fh <= 1.01f else item.spanX == 1 && item.spanY == 1
+    val iconDp = when {
+        item.free -> (min(w.value, h.value * (if (s.showLabels) 0.72f else 0.95f))).toInt().coerceIn(24, 200)
+        single -> min(s.iconSizeDp, (cellW.value - 8f).toInt()).coerceAtLeast(24)
+        else -> (min(w.value, h.value) * 0.6f).toInt().coerceAtLeast(24)
+    }
     val iconAlpha = if (item.alpha >= 0f) item.alpha else s.iconAlpha
+    val editing = env.editing
+    // 編集モード中は、アイコンやウィジェットを開かず、タップでその項目を選択する
+    fun act(f: () -> Unit): () -> Unit = if (editing) ({ env.onSelect(item.id) }) else f
+    val dtapAction: (() -> Unit)? =
+        if (item.dtap.isNotEmpty() && !editing) ({ env.onDoubleTap(item.dtap) }) else null
 
     Box(
         Modifier
-            .offset(cellW * item.x, cellH * item.y)
+            .offset(cellW * px, cellH * py)
             .size(w, h),
     ) {
         when (item.type) {
             HomeItem.APP -> {
                 val app = env.appMap[item.appKey]
                 if (app != null) {
+                    val badge = if (s.showBadges) env.badges[app.packageName]?.size ?: 0 else 0
                     AppCell(
                         app = app,
                         iconSizeDp = iconDp,
@@ -754,9 +892,11 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                         labelSizeSp = s.labelSizeSp,
                         onWallpaper = true,
                         modifier = Modifier.fillMaxSize(),
-                        onClick = { env.onLaunch(app) },
-                        onLongClick = { env.onSelect(item.id) },
+                        onClick = act { env.onLaunch(app) },
+                        onLongClick = { if (badge > 0 && !editing) env.onBadgeMenu(item) else env.onSelect(item.id) },
                         iconAlpha = iconAlpha,
+                        badge = badge,
+                        onDoubleClick = dtapAction,
                     )
                 }
             }
@@ -767,8 +907,9 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 labelSizeSp = s.labelSizeSp,
                 iconAlpha = iconAlpha,
                 modifier = Modifier.fillMaxSize(),
-                onClick = { env.onLaunchShortcut(item) },
+                onClick = act { env.onLaunchShortcut(item) },
                 onLongClick = { env.onSelect(item.id) },
+                onDoubleClick = dtapAction,
             )
             HomeItem.FOLDER -> {
                 val folder = env.folders.firstOrNull { it.id == item.ref }
@@ -782,7 +923,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                         iconAlpha = iconAlpha,
                         onWallpaper = true,
                         modifier = Modifier.fillMaxSize(),
-                        onClick = { env.onOpenFolder(folder.id) },
+                        onClick = act { env.onOpenFolder(folder.id) },
                         onLongClick = { env.onSelect(item.id) },
                     )
                 }
@@ -793,6 +934,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 alphaValue = if (item.alpha >= 0f) item.alpha else s.widgetGlobalAlpha,
                 widthDp = w.value.toInt(),
                 heightDp = h.value.toInt(),
+                locked = editing,
                 onSelect = { env.onSelect(item.id) },
             )
             HomeItem.STACK -> StackBox(
@@ -801,11 +943,12 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 settings = s,
                 widthDp = w.value.toInt(),
                 heightDp = h.value.toInt(),
+                locked = editing,
                 onSelect = { env.onSelect(item.id) },
             )
             HomeItem.SEARCH -> SearchBarTile(
                 bgAlpha = if (item.alpha >= 0f) item.alpha else s.searchBarAlpha,
-                onClick = env.onOpenSearch,
+                onClick = act { env.onOpenSearch() },
                 onLongClick = { env.onSelect(item.id) },
             )
             HomeItem.MEDIA -> MediaBar(
@@ -820,7 +963,8 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
 }
 
 /**
- * 選択中の項目の枠。本体をドラッグで移動、右下のつまみをドラッグでリサイズ(離すとマスにスナップ)。
+ * 選択中の項目の枠。本体をドラッグで移動、右下のつまみをドラッグでリサイズ。
+ * 通常はマスにスナップ、自由配置モードでは位置・大きさをそのまま確定する。
  * 左右の端に寄せたままにすると隣のページへ送り、ページをまたいで移動できる。
  */
 @Composable
@@ -832,23 +976,29 @@ private fun EditFrame(
     rows: Int,
     viewportWpx: Float,
     carrying: Boolean,
+    freeMode: Boolean,
     onCarry: (Boolean) -> Unit,
     onEdge: (Int) -> Unit,
     onCommit: (x: Int, y: Int, sx: Int, sy: Int) -> Unit,
+    onCommitFree: (fx: Float, fy: Float, fw: Float, fh: Float) -> Unit,
 ) {
     val density = LocalDensity.current
     var dx by remember { mutableFloatStateOf(0f) }
     var dy by remember { mutableFloatStateOf(0f) }
     var dw by remember { mutableFloatStateOf(0f) }
     var dh by remember { mutableFloatStateOf(0f) }
-    val baseW = cellWpx * item.spanX
-    val baseH = cellHpx * item.spanY
+    val ix = if (item.free) item.fx else item.x.toFloat()
+    val iy = if (item.free) item.fy else item.y.toFloat()
+    val iw = if (item.free) item.fw else item.spanX.toFloat()
+    val ih = if (item.free) item.fh else item.spanY.toFloat()
+    val baseW = cellWpx * iw
+    val baseH = cellHpx * ih
     val shape = RoundedCornerShape(12.dp)
     val primary = MaterialTheme.colorScheme.primary
 
     // 端に寄せている間、一定間隔でページを送る
     val edgePx = with(density) { 40.dp.toPx() }
-    val centerX = item.x * cellWpx + dx + (baseW + dw) / 2f
+    val centerX = ix * cellWpx + dx + (baseW + dw) / 2f
     val edgeDir = if (!carrying) 0 else when {
         centerX < edgePx -> -1
         centerX > viewportWpx - edgePx -> 1
@@ -863,25 +1013,36 @@ private fun EditFrame(
         }
     }
 
+    val keys = arrayOf<Any>(item.id, ix, iy, iw, ih, cols, rows, freeMode)
     Box(
         Modifier
-            .offset { IntOffset((item.x * cellWpx + dx).roundToInt(), (item.y * cellHpx + dy).roundToInt()) }
+            .offset { IntOffset((ix * cellWpx + dx).roundToInt(), (iy * cellHpx + dy).roundToInt()) }
             .size(
-                with(density) { (baseW + dw).coerceAtLeast(cellWpx * 0.5f).toDp() },
-                with(density) { (baseH + dh).coerceAtLeast(cellHpx * 0.5f).toDp() },
+                with(density) { (baseW + dw).coerceAtLeast(cellWpx * 0.3f).toDp() },
+                with(density) { (baseH + dh).coerceAtLeast(cellHpx * 0.3f).toDp() },
             )
             .border(2.dp, primary, shape)
             .background(primary.copy(alpha = 0.15f), shape)
-            .pointerInput(item.id, item.x, item.y, item.spanX, item.spanY, cols, rows) {
+            .pointerInput(*keys) {
                 detectDragGestures(
                     onDragStart = { onCarry(true) },
                     onDragEnd = {
-                        val nx = ((item.x * cellWpx + dx) / cellWpx).roundToInt().coerceIn(0, cols - item.spanX)
-                        val ny = ((item.y * cellHpx + dy) / cellHpx).roundToInt().coerceIn(0, rows - item.spanY)
+                        val px = (ix * cellWpx + dx) / cellWpx
+                        val py = (iy * cellHpx + dy) / cellHpx
                         dx = 0f
                         dy = 0f
                         onCarry(false)
-                        onCommit(nx, ny, item.spanX, item.spanY)
+                        if (freeMode) {
+                            onCommitFree(
+                                px.coerceIn(0f, (cols - iw).coerceAtLeast(0f)),
+                                py.coerceIn(0f, (rows - ih).coerceAtLeast(0f)),
+                                iw, ih,
+                            )
+                        } else {
+                            val sx = kotlin.math.ceil(iw).toInt().coerceIn(1, cols)
+                            val sy = kotlin.math.ceil(ih).toInt().coerceIn(1, rows)
+                            onCommit(px.roundToInt().coerceIn(0, cols - sx), py.roundToInt().coerceIn(0, rows - sy), sx, sy)
+                        }
                     },
                     onDragCancel = {
                         dx = 0f
@@ -900,14 +1061,27 @@ private fun EditFrame(
             Modifier
                 .align(Alignment.BottomEnd)
                 .size(44.dp)
-                .pointerInput(item.id, item.x, item.y, item.spanX, item.spanY, cols, rows) {
+                .pointerInput(*keys) {
                     detectDragGestures(
                         onDragEnd = {
-                            val nsx = ((baseW + dw) / cellWpx).roundToInt().coerceIn(1, cols - item.x)
-                            val nsy = ((baseH + dh) / cellHpx).roundToInt().coerceIn(1, rows - item.y)
+                            val w = (baseW + dw) / cellWpx
+                            val h = (baseH + dh) / cellHpx
                             dw = 0f
                             dh = 0f
-                            onCommit(item.x, item.y, nsx, nsy)
+                            if (freeMode) {
+                                onCommitFree(
+                                    ix.coerceIn(0f, cols - 0.3f), iy.coerceIn(0f, rows - 0.3f),
+                                    w.coerceIn(0.3f, cols - ix), h.coerceIn(0.3f, rows - iy),
+                                )
+                            } else {
+                                val bx = if (item.free) item.x else item.x
+                                val by = if (item.free) item.y else item.y
+                                onCommit(
+                                    bx, by,
+                                    w.roundToInt().coerceIn(1, (cols - bx).coerceAtLeast(1)),
+                                    h.roundToInt().coerceIn(1, (rows - by).coerceAtLeast(1)),
+                                )
+                            }
                         },
                         onDragCancel = {
                             dw = 0f
@@ -967,6 +1141,7 @@ private fun DockSlot(entry: String?, env: HomeEnv, onEmpty: () -> Unit, onLong: 
         )
         app != null -> AppCell(
             app = app,
+            badge = if (s.showBadges) env.badges[app.packageName]?.size ?: 0 else 0,
             iconSizeDp = iconDp,
             showLabel = false,
             labelSizeSp = s.labelSizeSp,
@@ -1010,7 +1185,10 @@ private fun SearchBarTile(bgAlpha: Float, onClick: () -> Unit, onLongClick: () -
     }
 }
 
-/** メディア操作バー。文字色を明示し、背景の不透明度は設定(個別設定)で変えられる。 */
+/**
+ * メディア操作バー。文字色を明示し、背景の不透明度は設定(個別設定)で変えられる。
+ * 大きさに応じて表示を切り替える: 極小=再生/停止のみ、小=3ボタン、通常=曲名+3ボタン(高さがあればアーティスト名も)。
+ */
 @Composable
 private fun MediaBar(
     state: MediaHelper.State,
@@ -1021,7 +1199,7 @@ private fun MediaBar(
 ) {
     val onSurface = MaterialTheme.colorScheme.onSurface
     val shape = RoundedCornerShape(20.dp)
-    Box(
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .padding(4.dp)
@@ -1030,39 +1208,60 @@ private fun MediaBar(
             .combinedClickable(onClick = {}, onLongClick = onLongClick),
         contentAlignment = Alignment.CenterStart,
     ) {
-        Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(end = 6.dp)) {
-                if (!state.permitted) {
-                    Text(
-                        "曲名を表示するには通知アクセスを許可",
-                        color = onSurface,
-                        fontSize = 13.sp,
-                        modifier = Modifier.clickable(onClick = onRequestPermission),
-                    )
-                } else {
-                    Text(
-                        state.title ?: if (state.hasSession) "再生中のメディア" else "メディアなし",
-                        color = onSurface,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    state.artist?.let {
+        val w = maxWidth
+        val h = maxHeight
+        val btnSize = (h.value * 0.45f).coerceIn(16f, 26f).sp
+        val showText = w >= 190.dp
+        val showAll = w >= 110.dp
+        val showArtist = h >= 56.dp
+        val colors = ButtonDefaults.textButtonColors(contentColor = onSurface)
+        val pad = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+        Row(
+            Modifier.fillMaxSize().padding(start = if (showText) 14.dp else 0.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = if (showText) Arrangement.Start else Arrangement.Center,
+        ) {
+            if (showText) {
+                Column(Modifier.weight(1f).padding(end = 6.dp)) {
+                    if (!state.permitted) {
                         Text(
-                            it,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
+                            "曲名を表示するには通知アクセスを許可",
+                            color = onSurface,
+                            fontSize = 13.sp,
+                            modifier = Modifier.clickable(onClick = onRequestPermission),
+                        )
+                    } else {
+                        Text(
+                            state.title ?: if (state.hasSession) "再生中のメディア" else "メディアなし",
+                            color = onSurface,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
+                        if (showArtist) {
+                            state.artist?.let {
+                                Text(
+                                    it,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
                 }
             }
-            val colors = ButtonDefaults.textButtonColors(contentColor = onSurface)
-            TextButton(onClick = { media.previous() }, colors = colors) { Text("⏮", fontSize = 20.sp) }
-            TextButton(onClick = { media.playPause() }, colors = colors) { Text(if (state.playing) "⏸" else "▶", fontSize = 20.sp) }
-            TextButton(onClick = { media.next() }, colors = colors) { Text("⏭", fontSize = 20.sp) }
+            if (showAll) {
+                TextButton(onClick = { media.previous() }, colors = colors, contentPadding = pad) { Text("⏮", fontSize = btnSize) }
+            }
+            TextButton(onClick = { media.playPause() }, colors = colors, contentPadding = pad) {
+                Text(if (state.playing) "⏸" else "▶", fontSize = btnSize)
+            }
+            if (showAll) {
+                TextButton(onClick = { media.next() }, colors = colors, contentPadding = pad) { Text("⏭", fontSize = btnSize) }
+            }
         }
     }
 }
@@ -1071,6 +1270,7 @@ private fun MediaBar(
 @Composable
 private fun SearchOverlay(
     apps: List<AppInfo>,
+    yomi: Map<String, String>,
     searchUrl: String,
     onLaunch: (AppInfo) -> Unit,
     onClose: () -> Unit,
@@ -1078,8 +1278,8 @@ private fun SearchOverlay(
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
-    val matches = remember(apps, query) {
-        AppSorter.sort(AppSorter.filter(apps, query), SortMode.NAME, emptyMap()).take(50)
+    val matches = remember(apps, query, yomi) {
+        AppSorter.sort(AppSorter.filter(apps, query, yomi), SortMode.NAME, emptyMap()).take(50)
     }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
@@ -1202,5 +1402,71 @@ private fun ItemEditDialog(
             }) { Text("適用") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } },
+    )
+}
+
+/** ダブルタップで開く対象("app:pkg/cls" か "sc:pkg|id")を起動する。 */
+private fun launchDtap(context: android.content.Context, vm: LauncherViewModel, appMap: Map<String, AppInfo>, code: String) {
+    when {
+        code.startsWith("app:") -> {
+            val app = appMap[code.removePrefix("app:")]
+            if (app != null) vm.launch(context, app) else toast(context, "アプリが見つかりません")
+        }
+        code.startsWith("sc:") -> {
+            val pkg = code.removePrefix("sc:").substringBefore('|')
+            val id = code.substringAfter('|')
+            if (!ShortcutHelper.launch(context, pkg, id)) toast(context, "ショートカットを開けません")
+        }
+    }
+}
+
+/** 画面の更新: アプリ一覧・ウィジェット・メディア・通知を取り直す。 */
+private fun refreshAll(vm: LauncherViewModel, widgets: WidgetController, media: MediaHelper) {
+    vm.repo.refresh()
+    widgets.stop()
+    widgets.start()
+    media.start()
+    BadgeStore.refresh()
+}
+
+/** アプリの通知の内容。タップでその通知を開き、「消す」で通知を消去する。 */
+@Composable
+private fun NotificationsDialog(pkg: String, appLabel: String, notifs: List<BadgeStore.Notif>, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("$appLabel の通知") },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("閉じる") } },
+        text = {
+            if (notifs.isEmpty()) {
+                Text("通知はありません。")
+            } else {
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(notifs, key = { it.key }) { n ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    runCatching { n.intent?.send() }
+                                    onDismiss()
+                                }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                if (n.title.isNotEmpty()) {
+                                    Text(n.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (n.text.isNotEmpty()) {
+                                    Text(n.text, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            if (n.clearable) {
+                                TextButton(onClick = { BadgeStore.dismiss(n.key) }) { Text("消す") }
+                            }
+                        }
+                    }
+                }
+            }
+        },
     )
 }

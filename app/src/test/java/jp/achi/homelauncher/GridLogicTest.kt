@@ -87,4 +87,39 @@ class GridLogicTest {
         val (_, hit) = GridLogic.placeWithPolicy(listOf(app(0, 0, 0)), app(0, 2, 2), "push_down", 4)
         assertFalse(hit)
     }
+
+    @Test
+    fun freeItemsDoNotBlockCellsOrCollide() {
+        val f = app(0, 1, 1).copy(free = true, fx = 1.3f, fy = 1.2f)
+        assertTrue(GridLogic.isFree(listOf(f), 0, 1, 1, 1, 1))
+        val (r, hit) = GridLogic.placeWithPolicy(listOf(f), app(0, 1, 1), "push_down", 4)
+        assertFalse(hit)
+        assertEquals(2, r.size)
+    }
+
+    @Test
+    fun clampKeepsFreeItemInsideScreen() {
+        val f = app(0, 0, 0).copy(free = true, fx = 9f, fy = -2f, fw = 2.5f, fh = 1.5f)
+        val c = GridLogic.clamp(f, 4, 5)
+        assertEquals(1.5f, c.fx, 0.001f)
+        assertEquals(0f, c.fy, 0.001f)
+    }
+
+    @Test
+    fun autoTidyResolvesOverlapsAndSnapsFreeItems() {
+        val a = app(0, 1, 1)
+        val b = app(0, 1, 1)
+        val f = app(0, 0, 0).copy(free = true, fx = 2.4f, fy = 3.2f)
+        val out = jp.achi.homelauncher.data.AutoLayout.tidy(listOf(a, b, f), 4, 5, 2)
+        assertTrue(out.none { it.free })
+        val cells = out.map { Triple(it.page, it.x, it.y) }
+        assertEquals(cells.size, cells.toSet().size)
+    }
+
+    @Test
+    fun autoFitSettingsStaysInRange() {
+        val s = jp.achi.homelauncher.data.AutoLayout.fitSettings(jp.achi.homelauncher.data.LauncherSettings(), 90f, 110f)
+        assertTrue(s.iconSizeDp in 32..96)
+        assertTrue(s.dockHeightDp in 56..120)
+    }
 }

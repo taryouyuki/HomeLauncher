@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +61,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
 /**
@@ -80,7 +82,48 @@ fun Modifier.detectLongPress(onLongPress: () -> Unit): Modifier = pointerInput(U
             }
             true
         }
-        if (ended == null) onLongPress()
+        if (ended == null) {
+            onLongPress()
+            // 指を離すまでの入力を消費して、下のウィジェットに「タップ」や「スクロール」として伝わらないようにする
+            // (長押しで編集モードに入った直後に、指を離した拍子にウィジェットが開くのを防ぐ)
+            var pressed = true
+            while (pressed) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                event.changes.forEach { it.consume() }
+                pressed = event.changes.any { it.pressed }
+            }
+        }
+    }
+}
+
+/**
+ * ウィジェット(AppWidgetHostView)を入れる枠。縦方向のドラッグが始まったら、親(Compose側)に
+ * 横取りされないよう要求し、メモ帳などウィジェット内のスクロールを優先する。
+ * 横方向のドラッグは従来どおりページ切り替え・スタックの切り替えに使える。
+ */
+class WidgetHostFrame(context: android.content.Context) : android.widget.FrameLayout(context) {
+    private var downX = 0f
+    private var downY = 0f
+    private var decided = false
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                downX = ev.x
+                downY = ev.y
+                decided = false
+            }
+            android.view.MotionEvent.ACTION_MOVE -> if (!decided) {
+                val dx = abs(ev.x - downX)
+                val dy = abs(ev.y - downY)
+                if (dx > slop || dy > slop) {
+                    decided = true
+                    if (dy > dx) parent?.requestDisallowInterceptTouchEvent(true)
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
     }
 }
 
@@ -135,11 +178,13 @@ private fun Modifier.stackSwipe(state: PagerState, scope: CoroutineScope): Modif
         }
         if (swiping) {
             val threshold = size.width * 0.15f
+            val last = (state.pageCount - 1).coerceAtLeast(0)
+            // 最後まで行ったら最初に戻る(最初から戻ると最後へ)
             val target = when {
-                totalX < -threshold -> startPage + 1
-                totalX > threshold -> startPage - 1
+                totalX < -threshold -> if (startPage >= last) 0 else startPage + 1
+                totalX > threshold -> if (startPage <= 0) last else startPage - 1
                 else -> startPage
-            }.coerceIn(0, (state.pageCount - 1).coerceAtLeast(0))
+            }.coerceIn(0, last)
             scope.launch { state.animateScrollToPage(target) }
         }
     }
@@ -169,6 +214,7 @@ fun WidgetBox(
     alphaValue: Float,
     widthDp: Int,
     heightDp: Int,
+    locked: Boolean,
     onSelect: () -> Unit,
 ) {
     val currentSelect by rememberUpdatedState(onSelect)
@@ -180,14 +226,33 @@ fun WidgetBox(
             .detectLongPress { currentSelect() },
     ) {
         AndroidView(
-            factory = { ctx -> widgets.createView(ctx, item.widgetId) ?: View(ctx) },
-            update = { v ->
+            factory = { ctx ->
+                WidgetHostFrame(ctx).also { frame ->
+                    frame.addView(
+                        widgets.createView(ctx, item.widgetId) ?: View(ctx),
+                        android.widget.FrameLayout.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        ),
+                    )
+                }
+            },
+            update = { frame ->
+                val v = frame.getChildAt(0)
                 if (v is AppWidgetHostView) {
                     runCatching { v.updateAppWidgetSize(null, widthDp, heightDp, widthDp, heightDp) }
                 }
             },
             modifier = Modifier.fillMaxSize().alpha(alphaValue),
         )
+        // 編集モード中はウィジェットを操作させない(タップで開いてしまうのを防ぐ)。タップでこの項目を選択する。
+        if (locked) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) { detectTapGestures(onTap = { currentSelect() }) },
+            )
+        }
     }
 }
 
@@ -199,6 +264,7 @@ fun StackBox(
     settings: LauncherSettings,
     widthDp: Int,
     heightDp: Int,
+    locked: Boolean,
     onSelect: () -> Unit,
 ) {
     val pagerState = rememberPagerState(pageCount = { children.size.coerceAtLeast(1) })
@@ -242,6 +308,7 @@ fun StackBox(
                         alphaValue = if (child.alpha >= 0f) child.alpha else settings.widgetGlobalAlpha,
                         widthDp = widthDp,
                         heightDp = heightDp,
+                        locked = locked,
                         onSelect = onSelect,
                     )
                 }

@@ -13,6 +13,15 @@ data class LauncherSettings(
     val showLabels: Boolean = true,
     val labelSizeSp: Int = 11,
     val lockLayout: Boolean = false,
+    /** true なら、ドラッグ移動・リサイズをマスに揃えず自由な位置・大きさにできる */
+    val freeMode: Boolean = false,
+    /** アイコンの形: original / circle / squircle / rounded / wobbly / pentagon / hexagon / octagon / flower */
+    val iconShape: String = "original",
+    /** 通知の数をアイコンに表示する(通知アクセスの許可が必要) */
+    val showBadges: Boolean = true,
+    /** 追加したフォントのファイル名(アプリ内保存)。空なら標準 */
+    val fontFile: String = "",
+    val fontName: String = "",
     /** 配置先に既存の項目がある場合の動作: overlap(被せる) / push_down(既存を下へ) / push_up(既存を上へ) */
     val overlapPolicy: String = OVERLAP,
     // ドック
@@ -56,6 +65,11 @@ data class LauncherSettings(
         put("showLabels", showLabels)
         put("labelSizeSp", labelSizeSp)
         put("lockLayout", lockLayout)
+        put("freeMode", freeMode)
+        put("iconShape", iconShape)
+        put("showBadges", showBadges)
+        put("fontFile", fontFile)
+        put("fontName", fontName)
         put("overlapPolicy", overlapPolicy)
         put("showDock", showDock)
         put("dockCount", dockCount)
@@ -86,6 +100,7 @@ data class LauncherSettings(
         const val OVERLAP = "overlap"
         const val PUSH_DOWN = "push_down"
         const val PUSH_UP = "push_up"
+        val SHAPES = setOf("original", "circle", "squircle", "rounded", "wobbly", "pentagon", "hexagon", "octagon", "flower")
         val DEFAULT_HOME_COLOR: Int = 0xFFF48FB1.toInt()
         val DEFAULT_DRAWER_COLOR: Int = 0xFFFFFFFF.toInt()
 
@@ -109,6 +124,11 @@ data class LauncherSettings(
                 showLabels = o.optBoolean("showLabels", d.showLabels),
                 labelSizeSp = o.optInt("labelSizeSp", d.labelSizeSp).coerceIn(8, 16),
                 lockLayout = o.optBoolean("lockLayout", d.lockLayout),
+                freeMode = o.optBoolean("freeMode", d.freeMode),
+                iconShape = oneOf(o.optString("iconShape", d.iconShape), SHAPES, d.iconShape),
+                showBadges = o.optBoolean("showBadges", d.showBadges),
+                fontFile = o.optString("fontFile", d.fontFile).filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' },
+                fontName = o.optString("fontName", d.fontName).take(60),
                 overlapPolicy = oneOf(o.optString("overlapPolicy", d.overlapPolicy), setOf(OVERLAP, PUSH_DOWN, PUSH_UP), d.overlapPolicy),
                 showDock = o.optBoolean("showDock", d.showDock),
                 dockCount = o.optInt("dockCount", d.dockCount).coerceIn(3, 7),

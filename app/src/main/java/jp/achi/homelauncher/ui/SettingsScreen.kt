@@ -108,6 +108,21 @@ fun SettingsScreen(
         if (uri != null) confirmImportUri = uri
     }
 
+    val fontLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val name = withContext(Dispatchers.IO) { importFont(context, uri) }
+                if (name == null) {
+                    toast(context, "フォントを読み込めません(ttf / otf を選んでください)")
+                } else {
+                    vm.updateSettings { it.copy(fontFile = name.first, fontName = name.second) }
+                    toast(context, "フォント「${name.second}」を設定しました")
+                }
+            }
+        }
+    }
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+
     fun update(t: (LauncherSettings) -> LauncherSettings) = vm.updateSettings(t)
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
@@ -186,6 +201,43 @@ fun SettingsScreen(
                                 FilterChip(s.overlapPolicy == LauncherSettings.PUSH_UP, { update { it.copy(overlapPolicy = LauncherSettings.PUSH_UP) } }, { Text("既存を上へずらす") })
                             }
                             SwitchRow("レイアウトをロック(長押し編集を無効化)", s.lockLayout) { v -> update { it.copy(lockLayout = v) } }
+                            SwitchRow("自由配置モード(マスに縛られず移動・サイズ変更)", s.freeMode) { v -> update { it.copy(freeMode = v) } }
+                            Text(
+                                "オフに戻して項目を動かすと、再びマスに揃います。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    val cellW = cfg.screenWidthDp.toFloat() / s.gridCols
+                                    val gridH = cfg.screenHeightDp - (if (s.showDock) s.dockHeightDp else 0) - 120f
+                                    vm.autoAdjust(cellW, gridH / s.gridRows)
+                                    toast(context, "大きさを合わせ、重なり・はみ出しを整えました")
+                                },
+                                modifier = Modifier.padding(top = 8.dp),
+                            ) { Text("表示を自動調整(AIなし)") }
+                            Text(
+                                "アイコン・文字・ドックの大きさをセルに合わせ、重なりを空きマスへ移し、自由配置をマスに揃えます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                            Section("アイコンの形")
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                ICON_SHAPE_LABELS.forEach { (key, label) ->
+                                    FilterChip(s.iconShape == key, { update { it.copy(iconShape = key) } }, { Text(label) })
+                                }
+                            }
+                            Section("通知バッジ")
+                            SwitchRow("通知の数をアイコンに表示", s.showBadges) { v -> update { it.copy(showBadges = v) } }
+                            Text(
+                                "通知アクセスの許可が必要です。バッジのあるアプリを長押しすると通知の内容を見られます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                            OutlinedButton(onClick = onRequestNotificationAccess) { Text("通知アクセスを設定") }
                         }
 
                         1 -> {
@@ -264,6 +316,17 @@ fun SettingsScreen(
                                 ThemeChips(s.homeDarkTheme) { v -> update { it.copy(homeDarkTheme = v) } }
                             }
                             PercentSliderRow("ホーム背景の暗さ", s.scrimAlpha, 0f, 0.8f) { v -> update { it.copy(scrimAlpha = v) } }
+                            Section("フォント")
+                            Text(
+                                if (s.fontFile.isEmpty()) "現在: 標準" else "現在: ${s.fontName}",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                                OutlinedButton(onClick = { fontLauncher.launch(arrayOf("*/*")) }) { Text("フォントを追加(ttf / otf)") }
+                                if (s.fontFile.isNotEmpty()) {
+                                    TextButton(onClick = { update { it.copy(fontFile = "", fontName = "") } }) { Text("標準に戻す") }
+                                }
+                            }
                         }
 
                         else -> {
@@ -417,3 +480,22 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
         Switch(checked = checked, onCheckedChange = onChange)
     }
 }
+
+/** 選んだフォントファイルをアプリ内に保存する。戻り値は (保存ファイル名, 表示名)。読み込めなければ null。 */
+private fun importFont(context: android.content.Context, uri: Uri): Pair<String, String>? = runCatching {
+    var display = "font"
+    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+        if (it.moveToFirst()) display = it.getString(0) ?: display
+    }
+    val dir = java.io.File(context.filesDir, "fonts").apply { mkdirs() }
+    val ext = if (display.lowercase().endsWith(".otf")) "otf" else "ttf"
+    val file = java.io.File(dir, "font_${System.currentTimeMillis()}.$ext")
+    context.contentResolver.openInputStream(uri)?.use { input -> file.outputStream().use { input.copyTo(it) } } ?: return null
+    // 壊れたファイルは弾く(Typeface を作れなければ不正)
+    if (android.graphics.Typeface.Builder(file).build() == null) {
+        file.delete()
+        return null
+    }
+    dir.listFiles()?.filter { it != file }?.forEach { it.delete() }
+    file.name to display.substringBeforeLast('.')
+}.getOrNull()

@@ -9,7 +9,13 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -55,12 +61,38 @@ tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
-/** アイコンのビットマップキャッシュ。 */
+/** アイコンのビットマップキャッシュ。flat=形を変えるときの、マスクなし(全面)のアイコン。 */
 object IconCache {
     private val cache = LruCache<String, ImageBitmap>(400)
     private const val SIZE_PX = 192
 
     fun get(key: String): ImageBitmap? = cache.get(key)
+
+    /** 形を指定するとき用。アダプティブアイコンの背景と前景を、標準マスクなしで全面に描く。 */
+    fun loadFlat(context: Context, app: AppInfo): ImageBitmap? {
+        val ck = "f:" + app.key
+        cache.get(ck)?.let { return it }
+        val drawable: Drawable = runCatching {
+            context.packageManager.getActivityIcon(android.content.ComponentName(app.packageName, app.className))
+        }.getOrNull() ?: return null
+        val bmp = runCatching {
+            val s = SIZE_PX
+            val b = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(b)
+            if (drawable is android.graphics.drawable.AdaptiveIconDrawable) {
+                val pad = s / 4 // レイヤーは108dp、見える範囲は中央72dp → 1.5倍に広げて見える範囲をちょうど s にする
+                drawable.background?.apply { setBounds(-pad, -pad, s + pad, s + pad); draw(c) }
+                drawable.foreground?.apply { setBounds(-pad, -pad, s + pad, s + pad); draw(c) }
+            } else {
+                val inset = s / 12
+                drawable.setBounds(inset, inset, s - inset, s - inset)
+                drawable.draw(c)
+            }
+            b.asImageBitmap()
+        }.getOrNull() ?: return null
+        cache.put(ck, bmp)
+        return bmp
+    }
 
     fun load(context: Context, app: AppInfo): ImageBitmap? {
         cache.get(app.key)?.let { return it }
@@ -76,14 +108,22 @@ object IconCache {
 @Composable
 fun AppIcon(app: AppInfo, sizeDp: Int, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val bitmap by produceState(initialValue = IconCache.get(app.key), app.key) {
+    val shape = iconShapeOf(LocalIconShape.current)
+    val cacheKey = if (shape != null) "f:" + app.key else app.key
+    val bitmap by produceState(initialValue = IconCache.get(cacheKey), cacheKey) {
         if (value == null) {
-            value = withContext(Dispatchers.Default) { IconCache.load(context, app) }
+            value = withContext(Dispatchers.Default) {
+                if (shape != null) IconCache.loadFlat(context, app) else IconCache.load(context, app)
+            }
         }
     }
     val bmp = bitmap
     if (bmp != null) {
-        Image(bitmap = bmp, contentDescription = app.label, modifier = modifier.size(sizeDp.dp))
+        Image(
+            bitmap = bmp,
+            contentDescription = app.label,
+            modifier = modifier.size(sizeDp.dp).let { if (shape != null) it.clip(shape) else it },
+        )
     } else {
         Spacer(modifier.size(sizeDp.dp))
     }
@@ -103,15 +143,20 @@ fun AppCell(
     iconAlpha: Float = 1f,
     subLabel: String? = null,
     labelColor: Color? = null,
+    badge: Int = 0,
+    onDoubleClick: (() -> Unit)? = null,
 ) {
     Column(
         modifier = modifier
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onDoubleClick)
             .padding(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        AppIcon(app, iconSizeDp, Modifier.alpha(iconAlpha))
+        Box {
+            AppIcon(app, iconSizeDp, Modifier.alpha(iconAlpha))
+            if (badge > 0) BadgeDot(badge, Modifier.align(Alignment.TopEnd).offset(x = 6.dp, y = (-4).dp))
+        }
         if (showLabel) {
             val color = labelColor ?: if (onWallpaper) Color.White else MaterialTheme.colorScheme.onSurface
             val shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null
@@ -134,6 +179,26 @@ fun AppCell(
                 maxLines = 1,
             )
         }
+    }
+}
+
+/** 通知の数を表す赤い丸。 */
+@Composable
+fun BadgeDot(count: Int, modifier: Modifier = Modifier) {
+    Box(
+        modifier
+            .defaultMinSize(minWidth = 17.dp, minHeight = 17.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFE53935))
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (count > 99) "99+" else count.toString(),
+            color = Color.White,
+            fontSize = 10.sp,
+            maxLines = 1,
+        )
     }
 }
 

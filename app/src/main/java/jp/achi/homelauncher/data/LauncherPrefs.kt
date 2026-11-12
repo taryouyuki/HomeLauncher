@@ -56,6 +56,44 @@ class LauncherPrefs(context: Context) {
         sp.edit().putString(KEY_FOLDERS, Folder.listToJson(list).toString()).apply()
     }
 
+    /** 読み仮名(アプリ名検索用)。key = "pkg/cls" */
+    fun loadYomi(): Map<String, String> = runCatching {
+        val o = JSONObject(sp.getString(KEY_YOMI, "{}"))
+        buildMap<String, String> {
+            val keys = o.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                o.optString(k).takeIf { it.isNotBlank() }?.let { put(k, it) }
+            }
+        }
+    }.getOrDefault(emptyMap())
+
+    fun saveYomi(map: Map<String, String>) {
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        sp.edit().putString(KEY_YOMI, o.toString()).apply()
+    }
+
+    /** 「ホーム画面に追加」の要求(PinShortcutActivity が積み、MainActivity が配置する)。 "pkg\tid\tlabel" */
+    @Synchronized
+    fun pushPin(pkg: String, id: String, label: String) {
+        val arr = runCatching { JSONArray(sp.getString(KEY_PINS, "[]")) }.getOrDefault(JSONArray())
+        arr.put(listOf(pkg, id, label).joinToString("\t"))
+        sp.edit().putString(KEY_PINS, arr.toString()).commit()
+    }
+
+    @Synchronized
+    fun popPins(): List<Triple<String, String, String>> {
+        val arr = runCatching { JSONArray(sp.getString(KEY_PINS, "[]")) }.getOrDefault(JSONArray())
+        sp.edit().remove(KEY_PINS).commit()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val p = arr.optString(i).split("\t")
+                if (p.size >= 2) add(Triple(p[0], p[1], p.getOrElse(2) { "" }))
+            }
+        }
+    }
+
     /** 検索バー/メディアバーをグリッド項目にした新レイアウトへの移行が済んだか。 */
     var layoutV2Done: Boolean
         get() = sp.getBoolean(KEY_LAYOUT_V2, false)
@@ -87,6 +125,8 @@ class LauncherPrefs(context: Context) {
         const val KEY_COUNTS = "launch_counts"
         const val KEY_FOLDERS = "folders"
         const val KEY_LAST_LAUNCH = "last_launch"
+        const val KEY_YOMI = "yomi"
+        const val KEY_PINS = "pending_pins"
         const val KEY_LAYOUT_V2 = "layout_v2_done"
     }
 }

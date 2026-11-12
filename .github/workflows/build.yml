@@ -46,4 +46,3 @@ jobs:
         with:
           name: HomeLauncher-apk
           path: app/build/outputs/apk/release/*.apk
-          retention-days: 1

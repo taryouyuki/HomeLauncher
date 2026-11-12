@@ -108,4 +108,23 @@ class BackupCodecTest {
         assertEquals(LauncherSettings(), r.settings)
         assertTrue(r.items.isEmpty())
     }
+
+    @Test
+    fun newFieldsRoundTrip() {
+        val settings = LauncherSettings(freeMode = true, iconShape = "hexagon", showBadges = false, fontFile = "font_1.ttf", fontName = "テスト")
+        val items = listOf(
+            HomeItem(id = "a", type = HomeItem.APP, page = 0, x = 1, y = 1, pkg = "p", cls = "c",
+                free = true, fx = 1.25f, fy = 2.5f, fw = 1.5f, fh = 1.5f, dtap = "app:q/d"),
+        )
+        val r = BackupCodec.decode(BackupCodec.encode(settings, items, emptyList(), emptyMap(), yomi = mapOf("p/c" to "てすと")))
+        assertEquals(settings, r.settings)
+        assertEquals(items, r.items)
+        assertEquals(mapOf("p/c" to "てすと"), r.yomi)
+    }
+
+    @Test
+    fun unknownIconShapeFallsBack() {
+        val o = JSONObject().put("iconShape", "banana")
+        assertEquals("original", LauncherSettings.fromJson(o).iconShape)
+    }
 }

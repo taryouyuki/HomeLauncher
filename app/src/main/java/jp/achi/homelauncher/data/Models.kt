@@ -45,9 +45,9 @@ object AppSorter {
     }
 
     /** アプリ名の部分一致(大文字小文字は区別しない)。空文字なら全件。 */
-    fun filter(apps: List<AppInfo>, query: String): List<AppInfo> {
-        val q = query.trim()
-        return if (q.isEmpty()) apps else apps.filter { it.label.contains(q, ignoreCase = true) }
+    fun filter(apps: List<AppInfo>, query: String, yomi: Map<String, String> = emptyMap()): List<AppInfo> {
+        if (query.isBlank()) return apps
+        return apps.filter { Kana.matches(it.label, query, yomi[it.key]) }
     }
 }
 
@@ -70,6 +70,14 @@ data class HomeItem(
     val ref: String = "",
     /** ウィジェットスタックの子なら、親STACKのitem id。空ならホーム直置き。 */
     val parent: String = "",
+    /** 自由配置(マスに縛られない)。true のとき fx/fy/fw/fh(マス単位の小数)で描画する。x,y,spanX,spanY は丸めた値。 */
+    val free: Boolean = false,
+    val fx: Float = 0f,
+    val fy: Float = 0f,
+    val fw: Float = 1f,
+    val fh: Float = 1f,
+    /** ダブルタップで開く対象。"app:pkg/cls" または "sc:pkg|shortcutId"。空なら無効。 */
+    val dtap: String = "",
 ) {
     val appKey: String get() = "$pkg/$cls"
 
@@ -88,6 +96,12 @@ data class HomeItem(
         put("alpha", alpha.toDouble())
         put("ref", ref)
         put("parent", parent)
+        put("free", free)
+        put("fx", fx.toDouble())
+        put("fy", fy.toDouble())
+        put("fw", fw.toDouble())
+        put("fh", fh.toDouble())
+        put("dtap", dtap)
     }
 
     companion object {
@@ -119,6 +133,12 @@ data class HomeItem(
                 alpha = o.optDouble("alpha", -1.0).toFloat(),
                 ref = o.optString("ref"),
                 parent = o.optString("parent"),
+                free = o.optBoolean("free", false),
+                fx = o.optDouble("fx", 0.0).toFloat(),
+                fy = o.optDouble("fy", 0.0).toFloat(),
+                fw = o.optDouble("fw", 1.0).toFloat().coerceAtLeast(0.2f),
+                fh = o.optDouble("fh", 1.0).toFloat().coerceAtLeast(0.2f),
+                dtap = o.optString("dtap"),
             )
         }
     }
@@ -166,7 +186,7 @@ object GridLogic {
         a.x < x + sx && x < a.x + a.spanX && a.y < y + sy && y < a.y + a.spanY
 
     fun isFree(items: List<HomeItem>, page: Int, x: Int, y: Int, sx: Int, sy: Int): Boolean =
-        items.none { it.parent.isEmpty() && it.page == page && overlaps(it, x, y, sx, sy) }
+        items.none { it.parent.isEmpty() && !it.free && it.page == page && overlaps(it, x, y, sx, sy) }
 
     /** 空きセルを探す。見つからなければ null。戻り値は Triple(page, x, y)。 */
     fun findFreeCell(
@@ -202,7 +222,7 @@ object GridLogic {
         val result = items.filter { it.id != mover.id }.toMutableList()
         result.add(mover)
         fun hits(cur: HomeItem) = result.filter {
-            it.id != cur.id && it.parent.isEmpty() && it.page == cur.page &&
+            it.id != cur.id && it.parent.isEmpty() && !it.free && !cur.free && it.page == cur.page &&
                 overlaps(it, cur.x, cur.y, cur.spanX, cur.spanY)
         }
         val collided = hits(mover).isNotEmpty()
@@ -230,6 +250,17 @@ object GridLogic {
 
     /** グリッドサイズが縮んでも画面内に収まるよう補正した表示用コピーを返す。 */
     fun clamp(item: HomeItem, cols: Int, rows: Int): HomeItem {
+        if (item.free) {
+            val fw = item.fw.coerceIn(0.3f, cols.toFloat())
+            val fh = item.fh.coerceIn(0.3f, rows.toFloat())
+            val fx = item.fx.coerceIn(0f, cols - fw)
+            val fy = item.fy.coerceIn(0f, rows - fh)
+            return item.copy(
+                fx = fx, fy = fy, fw = fw, fh = fh,
+                x = fx.toInt().coerceIn(0, cols - 1), y = fy.toInt().coerceIn(0, rows - 1),
+                spanX = kotlin.math.ceil(fw).toInt().coerceIn(1, cols), spanY = kotlin.math.ceil(fh).toInt().coerceIn(1, rows),
+            )
+        }
         val sx = item.spanX.coerceIn(1, cols)
         val sy = item.spanY.coerceIn(1, rows)
         return item.copy(
@@ -238,6 +269,46 @@ object GridLogic {
             x = item.x.coerceIn(0, cols - sx),
             y = item.y.coerceIn(0, rows - sy),
         )
+    }
+}
+
+/** 表示の自動調整(AIなし。セルの大きさから大きさ・間隔を決め、はみ出しや重なりを整える)。 */
+object AutoLayout {
+    /** セルの大きさ(dp)に合わせてアイコン・文字・ドックの大きさを決める。 */
+    fun fitSettings(s: LauncherSettings, cellWdp: Float, cellHdp: Float): LauncherSettings {
+        val labelRoom = if (s.showLabels) 0.62f else 0.8f
+        val icon = minOf(cellWdp * 0.72f, cellHdp * labelRoom).toInt().coerceIn(32, 96)
+        val label = (icon * 0.2f).toInt().coerceIn(9, 14)
+        val dock = (icon + 16).coerceIn(56, 120)
+        return s.copy(
+            iconSizeDp = icon,
+            labelSizeSp = label,
+            dockHeightDp = dock,
+            drawerIconSizeDp = icon.coerceIn(40, 72),
+        )
+    }
+
+    /** 自由配置をマスに揃え、はみ出しを直し、重なった項目は空きマスへ移す。 */
+    fun tidy(items: List<HomeItem>, cols: Int, rows: Int, pageCount: Int): List<HomeItem> {
+        val top = items.filter { it.parent.isEmpty() }
+            .sortedWith(compareBy({ it.page }, { it.y }, { it.x }))
+        val placed = mutableListOf<HomeItem>()
+        for (raw in top) {
+            var it0 = GridLogic.clamp(raw, cols, rows)
+            if (it0.free) {
+                it0 = it0.copy(free = false, spanX = it0.spanX.coerceIn(1, cols), spanY = it0.spanY.coerceIn(1, rows))
+                it0 = GridLogic.clamp(it0, cols, rows)
+            }
+            it0 = it0.copy(page = it0.page.coerceIn(0, pageCount - 1))
+            if (GridLogic.isFree(placed, it0.page, it0.x, it0.y, it0.spanX, it0.spanY)) {
+                placed.add(it0)
+            } else {
+                val cell = GridLogic.findFreeCell(placed, pageCount, cols, rows, it0.spanX, it0.spanY)
+                placed.add(if (cell != null) it0.copy(page = cell.first, x = cell.second, y = cell.third) else it0)
+            }
+        }
+        val byId = placed.associateBy { it.id }
+        return items.map { byId[it.id] ?: it }
     }
 }
 

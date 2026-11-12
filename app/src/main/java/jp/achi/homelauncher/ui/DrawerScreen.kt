@@ -70,6 +70,8 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val counts by vm.counts.collectAsStateWithLifecycle()
     val lastLaunch by vm.lastLaunch.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
+    val yomi by vm.yomi.collectAsStateWithLifecycle()
+    var yomiApp by remember { mutableStateOf<AppInfo?>(null) }
 
     var query by remember { mutableStateOf("") }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
@@ -77,8 +79,8 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val dateFmt = remember { SimpleDateFormat("yy/MM/dd", Locale.JAPAN) }
     val dateTimeFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.JAPAN) }
 
-    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch) {
-        AppSorter.sort(AppSorter.filter(apps, query), settings.drawerSort, counts, lastLaunch)
+    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch, yomi) {
+        AppSorter.sort(AppSorter.filter(apps, query, yomi), settings.drawerSort, counts, lastLaunch)
     }
 
     val custom = settings.drawerBgMode == "custom"
@@ -197,6 +199,18 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
         )
     }
 
+    yomiApp?.let { app ->
+        TextInputDialog(
+            title = "「${app.label}」の読み仮名(ひらがな)",
+            initial = yomi[app.key].orEmpty(),
+            onConfirm = {
+                yomiApp = null
+                vm.setYomi(app.key, it)
+            },
+            onDismiss = { yomiApp = null },
+        )
+    }
+
     menuApp?.let { app ->
         MenuDialog(
             title = app.label,
@@ -218,6 +232,10 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 "フォルダに追加" to {
                     menuApp = null
                     folderPickApp = app
+                },
+                "読み仮名を設定(検索用)" to {
+                    menuApp = null
+                    yomiApp = app
                 },
                 "アプリ情報" to {
                     menuApp = null

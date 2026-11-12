@@ -21,6 +21,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shadow
@@ -43,6 +44,22 @@ object ShortcutHelper {
         la.startShortcut(pkg, id, null, null, Process.myUserHandle())
         true
     }.getOrDefault(false)
+
+    /** 指定アプリのショートカット(ID, 表示名)の一覧。デフォルトのホームでないと空になる。 */
+    fun list(context: Context, pkg: String): List<Pair<String, String>> = runCatching {
+        val la = context.getSystemService(LauncherApps::class.java) ?: return emptyList()
+        if (!la.hasShortcutHostPermission()) return emptyList()
+        val q = LauncherApps.ShortcutQuery()
+            .setPackage(pkg)
+            .setQueryFlags(
+                LauncherApps.ShortcutQuery.FLAG_MATCH_DYNAMIC or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_MANIFEST or
+                    LauncherApps.ShortcutQuery.FLAG_MATCH_PINNED,
+            )
+        la.getShortcuts(q, Process.myUserHandle()).orEmpty()
+            .filter { it.isEnabled }
+            .map { it.id to (it.shortLabel?.toString() ?: it.id) }
+    }.getOrDefault(emptyList())
 
     /** ショートカット固有のアイコン。取得できなければ提供元アプリのアイコン。 */
     fun icon(context: Context, pkg: String, id: String): ImageBitmap? {
@@ -76,21 +93,23 @@ fun ShortcutCell(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onDoubleClick: (() -> Unit)? = null,
 ) {
+    val shape = iconShapeOf(LocalIconShape.current)
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(initialValue = null, item.pkg, item.cls) {
         value = withContext(Dispatchers.Default) { ShortcutHelper.icon(context, item.pkg, item.cls) }
     }
     Column(
         modifier = modifier
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onDoubleClick)
             .padding(2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         val b = bitmap
         if (b != null) {
-            Image(bitmap = b, contentDescription = item.ref, modifier = Modifier.size(iconSizeDp.dp).alpha(iconAlpha))
+            Image(bitmap = b, contentDescription = item.ref, modifier = Modifier.size(iconSizeDp.dp).alpha(iconAlpha).let { if (shape != null) it.clip(shape) else it })
         } else {
             Spacer(Modifier.size(iconSizeDp.dp))
         }

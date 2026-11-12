@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.achi.homelauncher.data.PlaceResult
+import jp.achi.homelauncher.media.BadgeStore
 import jp.achi.homelauncher.media.MediaHelper
 import jp.achi.homelauncher.ui.DrawerScreen
 import jp.achi.homelauncher.ui.HomeColorTheme
@@ -56,7 +57,7 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-        handlePinShortcut(intent)
+        handlePinShortcut()
     }
 
     override fun onStart() {
@@ -69,6 +70,8 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         // 通知アクセス設定から戻った直後に許可状態を反映する
         media.start()
+        BadgeStore.refresh()
+        handlePinShortcut()
     }
 
     override fun onPause() {
@@ -87,25 +90,18 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         // ホームボタンで戻ってきたら、一覧・設定を閉じる
         if (intent.hasCategory(Intent.CATEGORY_HOME)) homeSignal.intValue++
-        handlePinShortcut(intent)
+        handlePinShortcut()
     }
 
-    /** PinShortcutActivity から渡された「ホーム画面に追加」を配置する。 */
-    private fun handlePinShortcut(intent: Intent?) {
-        val pkg = intent?.getStringExtra(EXTRA_PIN_PKG) ?: return
-        val id = intent.getStringExtra(EXTRA_PIN_ID) ?: return
-        val label = intent.getStringExtra(EXTRA_PIN_LABEL).orEmpty()
-        intent.removeExtra(EXTRA_PIN_PKG)
-        intent.removeExtra(EXTRA_PIN_ID)
-        intent.removeExtra(EXTRA_PIN_LABEL)
-        val r = vm.addShortcut(pkg, id, label)
-        toast(this, if (r == PlaceResult.FAILED) "ホーム画面に空きがありません" else "ホーム画面に追加しました")
-    }
-
-    companion object {
-        const val EXTRA_PIN_PKG = "pin_pkg"
-        const val EXTRA_PIN_ID = "pin_id"
-        const val EXTRA_PIN_LABEL = "pin_label"
+    /** PinShortcutActivity が積んだ「ホーム画面に追加」を配置する。 */
+    private fun handlePinShortcut() {
+        val results = vm.consumePendingPins()
+        for ((label, r, page) in results) {
+            toast(
+                this,
+                if (r == PlaceResult.FAILED) "ホーム画面に空きがありません" else "「$label」をホーム画面(${page + 1}ページ目)に追加しました",
+            )
+        }
     }
 
     @Deprecated("AppWidgetHost のバインド/設定結果の受け取りに使用")

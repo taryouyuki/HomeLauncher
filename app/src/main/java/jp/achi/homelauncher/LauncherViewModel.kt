@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppRepository
+import jp.achi.homelauncher.data.AutoLayout
 import jp.achi.homelauncher.data.BackupCodec
 import jp.achi.homelauncher.data.DockEntry
 import jp.achi.homelauncher.data.Folder
@@ -33,6 +34,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     val counts = MutableStateFlow(prefs.loadCounts())
     val lastLaunch = MutableStateFlow(prefs.loadLastLaunch())
     val pendingRebind = MutableStateFlow(prefs.loadPending())
+    /** 読み仮名(アプリ名検索用)。key = "pkg/cls" */
+    val yomi = MutableStateFlow(prefs.loadYomi())
 
     /** 直近の配置結果(フォルダ作成のように戻り値で伝えにくい操作用)。 */
     var lastPlace: PlaceResult = PlaceResult.PLACED
@@ -64,6 +67,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     fun updateSettings(transform: (LauncherSettings) -> LauncherSettings) {
         settings.update(transform)
         prefs.saveSettings(settings.value)
+    }
+
+    fun setYomi(appKey: String, reading: String) {
+        yomi.update { if (reading.isBlank()) it - appKey else it + (appKey to reading.trim()) }
+        prefs.saveYomi(yomi.value)
     }
 
     fun setDrawerSort(mode: SortMode) = updateSettings { it.copy(drawerSort = mode) }
@@ -161,6 +169,45 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val sy = minOf(2, s.gridRows)
         return place(sx, sy, at) { p, x, y -> HomeItem(type = HomeItem.STACK, page = p, x = x, y = y, spanX = sx, spanY = sy) }
     }
+
+    /** 自由配置の確定。マスに揃えず、他の項目とも重ねたまま置く(最前面)。 */
+    fun placeFree(item: HomeItem) {
+        val s = settings.value
+        val fixed = GridLogic.clamp(item.copy(free = true, page = item.page.coerceIn(0, s.pageCount - 1)), s.gridCols, s.gridRows)
+        items.update { list -> list.filter { it.id != fixed.id } + fixed }
+        persistItems()
+    }
+
+    /** ウィジェットを、同じ場所・大きさのウィジェットスタックの1枚目に変換する。 */
+    fun convertWidgetToStack(widgetItemId: String): Boolean {
+        val w = items.value.firstOrNull { it.id == widgetItemId && it.type == HomeItem.WIDGET && it.parent.isEmpty() }
+            ?: return false
+        val stack = HomeItem(
+            type = HomeItem.STACK, page = w.page, x = w.x, y = w.y, spanX = w.spanX, spanY = w.spanY,
+            free = w.free, fx = w.fx, fy = w.fy, fw = w.fw, fh = w.fh,
+        )
+        items.update { list ->
+            list.map { if (it.id == w.id) it.copy(parent = stack.id, page = 0, x = 0, y = 0, free = false) else it } + stack
+        }
+        persistItems()
+        return true
+    }
+
+    /** 表示の自動調整: 大きさ(アイコン・文字・ドック)をセルに合わせ、はみ出し・重なり・自由配置を整える。 */
+    fun autoAdjust(cellWdp: Float, cellHdp: Float) {
+        updateSettings { AutoLayout.fitSettings(it, cellWdp, cellHdp) }
+        val s = settings.value
+        items.update { AutoLayout.tidy(it, s.gridCols, s.gridRows, s.pageCount) }
+        persistItems()
+    }
+
+    /** PinShortcutActivity が積んだ「ホーム画面に追加」を配置する。戻り値は (表示名, 結果, ページ) の一覧。 */
+    fun consumePendingPins(): List<Triple<String, PlaceResult, Int>> =
+        prefs.popPins().map { (pkg, id, label) ->
+            val r = addShortcut(pkg, id, label)
+            val page = items.value.firstOrNull { it.type == HomeItem.SHORTCUT && it.pkg == pkg && it.cls == id }?.page ?: 0
+            Triple(label, r, page)
+        }
 
     fun addWidget(item: HomeItem) {
         items.update { it + item }
@@ -299,7 +346,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- バックアップ ----
     fun exportBackup(): String =
-        BackupCodec.encode(settings.value, items.value, dock.value, counts.value, folders.value, lastLaunch.value)
+        BackupCodec.encode(settings.value, items.value, dock.value, counts.value, folders.value, lastLaunch.value, yomi.value)
 
     /** 成功時は、不要になった旧ウィジェットIDの一覧(呼び出し側で解放する)を返す。 */
     fun importBackup(text: String): Result<List<Int>> = runCatching {
@@ -312,6 +359,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         dock.value = backup.dock
         counts.value = backup.counts
         lastLaunch.value = backup.lastLaunch
+        yomi.value = backup.yomi
         pendingRebind.value = backup.items.filter { it.type == HomeItem.WIDGET }
 
         prefs.saveSettings(settings.value)
@@ -320,6 +368,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         prefs.saveDock(dock.value)
         prefs.saveCounts(counts.value)
         prefs.saveLastLaunch(lastLaunch.value)
+        prefs.saveYomi(yomi.value)
         prefs.savePending(pendingRebind.value)
         prefs.layoutV2Done = true
         oldWidgetIds
