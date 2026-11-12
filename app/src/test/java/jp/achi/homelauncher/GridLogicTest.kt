@@ -153,7 +153,9 @@ class GridLogicTest {
         val a = app(0, 0, 0)
         val (r, hit) = GridLogic.placeWithPolicy(listOf(a, w), app(0, 0, 0), "shift", 5, 4)
         assertTrue(hit)
-        assertEquals(2, r.size)
+        // 3件とも残り、既存のアイコンは「下へずらす」にフォールバックして1行下がる
+        assertEquals(3, r.size)
+        assertEquals(1, r.first { it.id == a.id }.y)
     }
 
     @Test
