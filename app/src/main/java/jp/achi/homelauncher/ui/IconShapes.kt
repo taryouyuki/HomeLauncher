@@ -21,11 +21,13 @@ val ICON_SHAPE_LABELS: List<Pair<String, String>> = listOf(
     "squircle" to "丸みの四角",
     "rounded" to "角丸",
     "wobbly" to "歪んだ丸",
+    "wobbly_soft" to "ゆるい丸(丸に近い)",
     "flower" to "花形",
     "pentagon" to "五角形",
     "hexagon" to "六角形",
     "octagon" to "八角形",
     "heart" to "ハート",
+    "heart_round" to "ふっくらハート",
 )
 
 private fun polar(size: Size, steps: Int, r: (Double) -> Double): Path = Path().apply {
@@ -58,6 +60,9 @@ private fun polygon(n: Int) = GenericShape { size, _ ->
 private val WOBBLY = GenericShape { size, _ ->
     addPath(polar(size, 120) { t -> 0.92 + 0.04 * sin(3 * t + 0.6) + 0.03 * cos(5 * t + 1.3) })
 }
+private val WOBBLY_SOFT = GenericShape { size, _ ->
+    addPath(polar(size, 120) { t -> 0.96 + 0.015 * sin(3 * t + 0.6) + 0.012 * cos(5 * t + 1.3) })
+}
 private val FLOWER = GenericShape { size, _ ->
     addPath(polar(size, 160) { t -> 0.9 + 0.08 * cos(8 * t) })
 }
@@ -83,6 +88,23 @@ private val HEART = GenericShape { size, _ ->
     close()
 }
 
+/** 丸みを強くした、ふっくらしたハート(左右対称・先端も丸い)。 */
+private val HEART_ROUND = GenericShape { size, _ ->
+    val w = size.width
+    val h = size.height
+    fun x(v: Float) = v * w
+    fun y(v: Float) = v * h
+    moveTo(x(0.50f), y(0.28f))
+    cubicTo(x(0.44f), y(0.06f), x(0.12f), y(0.02f), x(0.05f), y(0.28f))
+    cubicTo(x(0.00f), y(0.46f), x(0.12f), y(0.62f), x(0.30f), y(0.77f))
+    cubicTo(x(0.40f), y(0.85f), x(0.45f), y(0.90f), x(0.47f), y(0.93f))
+    cubicTo(x(0.49f), y(0.96f), x(0.51f), y(0.96f), x(0.53f), y(0.93f))
+    cubicTo(x(0.55f), y(0.90f), x(0.60f), y(0.85f), x(0.70f), y(0.77f))
+    cubicTo(x(0.88f), y(0.62f), x(1.00f), y(0.46f), x(0.95f), y(0.28f))
+    cubicTo(x(0.88f), y(0.02f), x(0.56f), y(0.06f), x(0.50f), y(0.28f))
+    close()
+}
+
 /** 形のキーから Shape を返す。original(や不明な値)は null。 */
 fun iconShapeOf(key: String): Shape? = when (key) {
     "circle" -> CircleShape
@@ -94,5 +116,7 @@ fun iconShapeOf(key: String): Shape? = when (key) {
     "hexagon" -> polygon(6)
     "octagon" -> polygon(8)
     "heart" -> HEART
+    "heart_round" -> HEART_ROUND
+    "wobbly_soft" -> WOBBLY_SOFT
     else -> null
 }

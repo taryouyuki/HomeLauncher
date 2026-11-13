@@ -215,7 +215,7 @@ fun AppCell(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 style = TextStyle(fontFamily = LocalAppFont.current, shadow = shadow),
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(top = 2.dp).heightIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { ((labelSizeSp + 2).sp * labelLines).toDp() }),
             )
         }
         if (subLabel != null) {

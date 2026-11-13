@@ -48,6 +48,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.sp
 import jp.achi.homelauncher.data.AppInfo
+import jp.achi.homelauncher.data.HomeItem
 import jp.achi.homelauncher.data.AppSorter
 import jp.achi.homelauncher.data.Folder
 import jp.achi.homelauncher.data.SortMode
@@ -85,13 +86,15 @@ fun FolderTile(
             contentAlignment = Alignment.Center,
         ) {
             val mini = (iconSizeDp * 0.25f).toInt().coerceAtLeast(10)
-            val shown = folder.apps.mapNotNull { appMap[it] }.take(9)
+            val shown = folder.apps.filter { it.startsWith("sc:") || appMap[it] != null }.take(9)
             Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceEvenly) {
                 for (r in 0 until 3) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         for (c in 0 until 3) {
-                            val app = shown.getOrNull(r * 3 + c)
+                            val e = shown.getOrNull(r * 3 + c)
+                            val app = e?.let { appMap[it] }
                             if (app != null) AppIcon(app, mini, Modifier.alpha(iconAlpha))
+                            else if (e != null && e.startsWith("sc:")) PackageIcon(e.removePrefix("sc:").substringBefore('|'), mini)
                             else Spacer(Modifier.size(mini.dp))
                         }
                     }
@@ -107,7 +110,7 @@ fun FolderTile(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 style = TextStyle(fontFamily = LocalAppFont.current, shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null),
-                modifier = Modifier.padding(top = 2.dp),
+                modifier = Modifier.padding(top = 2.dp).heightIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { ((labelSizeSp + 2).sp * labelLines).toDp() }),
             )
         }
     }
@@ -129,6 +132,8 @@ fun FolderDialog(
     onLaunch: (AppInfo) -> Unit,
     onPutOnHome: (AppInfo) -> Unit,
     onRemoveFromFolder: (AppInfo) -> Unit,
+    onLaunchShortcut: (pkg: String, id: String) -> Unit = { _, _ -> },
+    onRemoveEntry: (String) -> Unit = {},
     onAddApp: (AppInfo) -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
@@ -137,7 +142,8 @@ fun FolderDialog(
     var showPicker by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
-    val members = folder.apps.mapNotNull { appMap[it] }
+    val entries = folder.apps.filter { it.startsWith("sc:") || appMap[it] != null }
+    var menuSc by remember { mutableStateOf<String?>(null) }
     val cs = MaterialTheme.colorScheme
     val panel = androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.68f).copy(alpha = 0.9f)
     val pill = androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.78f).copy(alpha = 0.95f)
@@ -159,7 +165,7 @@ fun FolderDialog(
                     .background(panel)
                     .padding(start = 12.dp, end = 12.dp, top = 18.dp, bottom = 22.dp),
             ) {
-                if (members.isEmpty()) {
+                if (entries.isEmpty()) {
                     Text(
                         "アプリがありません。下の「⋮」→「アプリを追加」から入れてください。",
                         color = Color.White,
@@ -171,8 +177,25 @@ fun FolderDialog(
                         columns = GridCells.Fixed(cols.coerceIn(3, 5)),
                         modifier = Modifier.heightIn(max = 400.dp),
                     ) {
-                        items(members, key = { it.key }) { app ->
-                            AppCell(
+                        items(entries, key = { it }) { e ->
+                            val app = appMap[e]
+                            if (app == null) {
+                                val parts = e.removePrefix("sc:").split('|', limit = 3)
+                                val pkg = parts.getOrElse(0) { "" }
+                                val sid = parts.getOrElse(1) { "" }
+                                val label = parts.getOrElse(2) { "" }
+                                ShortcutCell(
+                                    item = HomeItem(type = HomeItem.SHORTCUT, page = 0, x = 0, y = 0, pkg = pkg, cls = sid, ref = label),
+                                    iconSizeDp = minOf(iconSizeDp, if (cols >= 5) 48 else if (cols == 4) 56 else 72),
+                                    showLabel = true,
+                                    labelSizeSp = labelSizeSp,
+                                    iconAlpha = 1f,
+                                    labelLines = labelLines,
+                                    modifier = Modifier.padding(vertical = 8.dp),
+                                    onClick = { onLaunchShortcut(pkg, sid) },
+                                    onLongClick = { menuSc = e },
+                                )
+                            } else AppCell(
                                 app = app,
                                 iconSizeDp = minOf(iconSizeDp, if (cols >= 5) 48 else if (cols == 4) 56 else 72),
                                 showLabel = true,
@@ -247,6 +270,17 @@ fun FolderDialog(
                 onRename(it)
             },
             onDismiss = { showRename = false },
+        )
+    }
+
+    menuSc?.let { e ->
+        MenuDialog(
+            title = e.removePrefix("sc:").split('|', limit = 3).getOrElse(2) { "ショートカット" },
+            entries = listOf("フォルダから外す" to {
+                menuSc = null
+                onRemoveEntry(e)
+            }),
+            onDismiss = { menuSc = null },
         )
     }
 

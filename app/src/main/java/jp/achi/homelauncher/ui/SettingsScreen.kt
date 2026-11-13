@@ -287,7 +287,11 @@ fun SettingsScreen(
                             }
                             SwitchRow("レイアウトをロック(長押し編集を無効化)", s.lockLayout) { v -> update { it.copy(lockLayout = v) } }
                             SwitchRow("ホーム画面に「編集」ボタンを表示(長押し不要の編集モード)", s.showEditButton) { v -> update { it.copy(showEditButton = v) } }
+                            SwitchRow("アイコンを別のアイコン/フォルダに重ねたらフォルダにまとめる(ショートカット含む)", s.mergeOnDrop) { v -> update { it.copy(mergeOnDrop = v) } }
                             SwitchRow("自由配置モード(マスに縛られず移動・サイズ変更)", s.freeMode) { v -> update { it.copy(freeMode = v) } }
+                            if (s.freeMode) {
+                                SwitchRow("自由配置はウィジェットだけにする(アイコンはマスに揃える)", s.freeWidgetsOnly) { v -> update { it.copy(freeWidgetsOnly = v) } }
+                            }
                             Text(
                                 "オフに戻して項目を動かすと、再びマスに揃います。",
                                 style = MaterialTheme.typography.bodySmall,

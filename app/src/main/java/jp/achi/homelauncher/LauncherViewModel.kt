@@ -10,6 +10,7 @@ import jp.achi.homelauncher.data.BackupCodec
 import jp.achi.homelauncher.data.DockEntry
 import jp.achi.homelauncher.data.Folder
 import jp.achi.homelauncher.data.GridLogic
+import jp.achi.homelauncher.data.folderEntry
 import jp.achi.homelauncher.data.HomeItem
 import jp.achi.homelauncher.data.LauncherPrefs
 import jp.achi.homelauncher.data.LauncherSettings
@@ -78,6 +79,14 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     fun setYomi(appKey: String, reading: String) {
         yomi.update { if (reading.isBlank()) it - appKey else it + (appKey to reading.trim()) }
         prefs.saveYomi(yomi.value)
+    }
+
+    /** アプリ一覧から隠すアプリ(ホームには置ける)。 */
+    val hidden = MutableStateFlow(prefs.loadStringMap("hidden_apps").keys)
+
+    fun setHidden(appKey: String, hide: Boolean) {
+        hidden.update { if (hide) it + appKey else it - appKey }
+        prefs.saveStringMap("hidden_apps", hidden.value.associateWith { "1" })
     }
 
     fun setCategory(appKey: String, name: String) {
@@ -497,9 +506,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ホーム上のアプリアイコンをフォルダへ移す。 */
     fun moveHomeAppToFolder(itemId: String, folderId: String) {
-        val item = items.value.firstOrNull { it.id == itemId && it.type == HomeItem.APP } ?: return
+        val item = items.value.firstOrNull { it.id == itemId && (it.type == HomeItem.APP || it.type == HomeItem.SHORTCUT) } ?: return
         removeItem(itemId)
-        addToFolder(folderId, item.appKey)
+        addToFolder(folderId, item.folderEntry)
     }
 
     /**
@@ -507,12 +516,12 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * アプリ+アプリなら新しいフォルダを作り、アプリ+フォルダなら中に入れる。
      */
     fun mergeIntoFolder(draggedId: String, targetId: String): Boolean {
-        val dragged = items.value.firstOrNull { it.id == draggedId && it.type == HomeItem.APP } ?: return false
+        val dragged = items.value.firstOrNull { it.id == draggedId && (it.type == HomeItem.APP || it.type == HomeItem.SHORTCUT) } ?: return false
         val target = items.value.firstOrNull { it.id == targetId } ?: return false
         if (target.id == dragged.id) return false
         return when (target.type) {
-            HomeItem.APP -> {
-                val folder = Folder(name = "フォルダ", apps = listOf(target.appKey, dragged.appKey))
+            HomeItem.APP, HomeItem.SHORTCUT -> {
+                val folder = Folder(name = "フォルダ", apps = listOf(target.folderEntry, dragged.folderEntry))
                 folders.update { it + folder }
                 items.update { list ->
                     list.filterNot { it.id == draggedId || it.id == targetId } +
@@ -524,7 +533,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
             }
             HomeItem.FOLDER -> {
                 removeItem(draggedId)
-                addToFolder(target.ref, dragged.appKey)
+                addToFolder(target.ref, dragged.folderEntry)
                 true
             }
             else -> false

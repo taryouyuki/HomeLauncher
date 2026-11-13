@@ -353,13 +353,15 @@ fun IconSetBox(
     locked: Boolean,
     badges: Map<String, List<jp.achi.homelauncher.media.BadgeStore.Notif>>,
     onLaunch: (jp.achi.homelauncher.data.AppInfo) -> Unit,
+    onDoubleTap: (String) -> Unit,
     onSelect: () -> Unit,
 ) {
     val cols = set.spanX.coerceAtLeast(1)
     val rows = set.spanY.coerceAtLeast(1)
     val cap = cols * rows
-    val apps = children.mapNotNull { appMap[it.appKey] }
-    val chunks = apps.chunked(cap)
+    val pairs = children.mapNotNull { c -> appMap[c.appKey]?.let { it to c.dtap } }
+    val apps = pairs.map { it.first }
+    val chunks = pairs.chunked(cap)
     val count = chunks.size.coerceAtLeast(1)
     val loop = count > 1
     val virtual = if (loop) count * 1000 else 1
@@ -403,7 +405,8 @@ fun IconSetBox(
                     for (r in 0 until rows) {
                         Row(Modifier.weight(1f).fillMaxWidth()) {
                             for (c in 0 until cols) {
-                                val app = page.getOrNull(r * cols + c)
+                                val pair = page.getOrNull(r * cols + c)
+                                val app = pair?.first
                                 Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
                                     if (app != null) {
                                         val badge = if (settings.showBadges) badges[app.packageName]?.size ?: 0 else 0
@@ -419,6 +422,7 @@ fun IconSetBox(
                                             iconAlpha = settings.iconAlpha,
                                             badge = badge,
                                             labelLines = settings.labelLines,
+                                            onDoubleClick = pair?.second?.takeIf { it.isNotEmpty() && !locked }?.let { code -> { onDoubleTap(code) } },
                                         )
                                     }
                                 }

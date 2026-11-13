@@ -128,6 +128,7 @@ class BackupCodecTest {
             labelLines = 2, themedIcons = "on", homeLoop = false, homePage = 1,
             marginDp = 12, mediaShowSource = false, searchHistoryCount = 3,
             folderCols = 5, quickPanel = false, quickApps = "a.b,c.d",
+            freeWidgetsOnly = true, mergeOnDrop = false, iconShape = "heart_round",
         )
         val items = listOf(HomeItem(id = "s", type = HomeItem.ICONS, page = 0, x = 0, y = 0, spanX = 3, spanY = 3, alpha = 0.5f))
         val r = BackupCodec.decode(BackupCodec.encode(settings, items, emptyList(), emptyMap()))

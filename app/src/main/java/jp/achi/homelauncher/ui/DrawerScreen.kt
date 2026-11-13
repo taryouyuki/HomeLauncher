@@ -71,7 +71,12 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val personalApps by vm.apps.collectAsStateWithLifecycle()
     val workApps by vm.workApps.collectAsStateWithLifecycle()
     var showWork by remember { mutableStateOf(false) }
-    val apps = if (showWork) workApps else personalApps
+    val hiddenKeys by vm.hidden.collectAsStateWithLifecycle()
+    var showHidden by remember { mutableStateOf(false) }
+    val allApps = if (showWork) workApps else personalApps
+    val apps = remember(allApps, hiddenKeys, showHidden) {
+        allApps.filter { (it.key in hiddenKeys) == showHidden }
+    }
     val counts by vm.counts.collectAsStateWithLifecycle()
     val lastLaunch by vm.lastLaunch.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
@@ -161,6 +166,13 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 SortChip("よく使う順", settings.drawerSort == SortMode.FREQUENT) { vm.setDrawerSort(SortMode.FREQUENT) }
                 SortChip("更新順", settings.drawerSort == SortMode.UPDATED) { vm.setDrawerSort(SortMode.UPDATED) }
                 SortChip("カテゴリー順", byCategory) { vm.setDrawerSort(SortMode.CATEGORY) }
+                if (hiddenKeys.isNotEmpty() || showHidden) {
+                    FilterChip(
+                        selected = showHidden,
+                        onClick = { showHidden = !showHidden },
+                        label = { Text("非表示(${hiddenKeys.size})") },
+                    )
+                }
                 // 仕事用プロファイル(Island など)のアプリだけを表示する
                 FilterChip(
                     selected = showWork,
@@ -307,6 +319,11 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 "カテゴリーを変更(現在: ${AppCategory.of(app, categories)})" to {
                     menuApp = null
                     catApp = app
+                },
+                (if (app.key in hiddenKeys) "アプリ一覧に再表示する" else "アプリ一覧から隠す") to {
+                    menuApp = null
+                    vm.setHidden(app.key, app.key !in hiddenKeys)
+                    toast(context, if (app.key in hiddenKeys) "再表示しました" else "隠しました(一覧の「非表示」チップで確認できます)")
                 },
                 "読み仮名を設定(検索用)" to {
                     menuApp = null

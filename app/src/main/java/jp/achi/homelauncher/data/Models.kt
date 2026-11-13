@@ -477,6 +477,10 @@ object AutoLayout {
     }
 }
 
+/** フォルダに入れるときの文字列。アプリは "pkg/cls"、ショートカットは "sc:pkg|id|表示名"。 */
+val HomeItem.folderEntry: String
+    get() = if (type == HomeItem.SHORTCUT) "sc:$pkg|$cls|$ref" else appKey
+
 /** アプリフォルダ。ホーム画面(HomeItem.FOLDER)とドックの両方から参照される。 */
 data class Folder(
     val id: String = UUID.randomUUID().toString(),

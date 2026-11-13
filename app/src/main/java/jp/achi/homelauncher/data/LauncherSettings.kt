@@ -35,6 +35,10 @@ data class LauncherSettings(
     val searchHistoryCount: Int = 5,
     /** フォルダを開いたときの1行のアプリ数(3〜5) */
     val folderCols: Int = 4,
+    /** 自由配置モードをウィジェット(・スタック・メディア等)だけに適用する */
+    val freeWidgetsOnly: Boolean = false,
+    /** アイコン(アプリ・ショートカット)を別のアイコン/フォルダに重ねたらフォルダにまとめる */
+    val mergeOnDrop: Boolean = true,
     /** ホームで上から下へスワイプして出す「クイックパネル」を使う */
     val quickPanel: Boolean = true,
     /** クイックパネルに表示するアプリ(パッケージ名をカンマ区切り。空なら Twitter(X)/Discord/Spotify などの既定) */
@@ -103,6 +107,8 @@ data class LauncherSettings(
         put("mediaShowSource", mediaShowSource)
         put("searchHistoryCount", searchHistoryCount)
         put("folderCols", folderCols)
+        put("freeWidgetsOnly", freeWidgetsOnly)
+        put("mergeOnDrop", mergeOnDrop)
         put("quickPanel", quickPanel)
         put("quickApps", quickApps)
         put("fontFile", fontFile)
@@ -143,7 +149,7 @@ data class LauncherSettings(
         const val PUSH_UP = "push_up"
         /** 押し出し: 重なった位置から後ろのアイコンを1つずつずらす(A B C → C A B) */
         const val SHIFT = "shift"
-        val SHAPES = setOf("original", "circle", "squircle", "rounded", "wobbly", "pentagon", "hexagon", "octagon", "flower", "heart")
+        val SHAPES = setOf("original", "circle", "squircle", "rounded", "wobbly", "pentagon", "hexagon", "octagon", "flower", "heart", "wobbly_soft", "heart_round")
         val DEFAULT_HOME_COLOR: Int = 0xFFF48FB1.toInt()
         val DEFAULT_DRAWER_COLOR: Int = 0xFFFFFFFF.toInt()
 
@@ -178,6 +184,8 @@ data class LauncherSettings(
                 mediaShowSource = o.optBoolean("mediaShowSource", d.mediaShowSource),
                 searchHistoryCount = o.optInt("searchHistoryCount", d.searchHistoryCount).coerceIn(0, 10),
                 folderCols = o.optInt("folderCols", d.folderCols).coerceIn(3, 5),
+                freeWidgetsOnly = o.optBoolean("freeWidgetsOnly", d.freeWidgetsOnly),
+                mergeOnDrop = o.optBoolean("mergeOnDrop", d.mergeOnDrop),
                 quickPanel = o.optBoolean("quickPanel", d.quickPanel),
                 quickApps = o.optString("quickApps", d.quickApps),
                 fontFile = o.optString("fontFile", d.fontFile).filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' },

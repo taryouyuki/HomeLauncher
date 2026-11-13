@@ -166,6 +166,7 @@ fun HomeScreen(
     val dockDtap by vm.dockDtap.collectAsStateWithLifecycle()
     val searchHistory by vm.searchHistory.collectAsStateWithLifecycle()
     val adjustSnap by vm.adjust.collectAsStateWithLifecycle()
+    val quickHistory by BadgeStore.history.collectAsStateWithLifecycle()
     var quickOpen by remember { mutableStateOf(false) }
 
     var selectedId by remember { mutableStateOf<String?>(null) }
@@ -182,6 +183,8 @@ fun HomeScreen(
     var showAppPicker by remember { mutableStateOf(false) }
     var openFolderId by remember { mutableStateOf<String?>(null) }
     var folderPickItem by remember { mutableStateOf<HomeItem?>(null) }
+    /** アプリのショートカット一覧・アプリ情報メニュー(編集バーから) */
+    var appMenuItem by remember { mutableStateOf<HomeItem?>(null) }
     /** フォルダ作成先。-1 ならホーム、0以上ならドックの位置。null は非表示。 */
     var newFolderAt by remember { mutableStateOf<Int?>(null) }
     var stackManageId by remember { mutableStateOf<String?>(null) }
@@ -336,10 +339,12 @@ fun HomeScreen(
 
     /** アプリを、重なった先のアプリ/フォルダ/アイコンセットにまとめる。まとめたら true。 */
     fun tryMerge(sel: HomeItem, page: Int, cx: Int, cy: Int): Boolean {
-        if (sel.type != HomeItem.APP) return false
+        if (!vm.settings.value.mergeOnDrop) return false
+        if (sel.type != HomeItem.APP && sel.type != HomeItem.SHORTCUT) return false
         val target = vm.items.value.firstOrNull { t ->
             t.id != sel.id && t.parent.isEmpty() && t.page == page &&
-                (t.type == HomeItem.APP || t.type == HomeItem.FOLDER || t.type == HomeItem.ICONS) &&
+                (t.type == HomeItem.APP || t.type == HomeItem.SHORTCUT || t.type == HomeItem.FOLDER ||
+                    (t.type == HomeItem.ICONS && sel.type == HomeItem.APP)) &&
                 GridLogic.overlaps(t, cx, cy, 1, 1)
         } ?: return false
         val ok = if (target.type == HomeItem.ICONS) vm.moveHomeAppToIconSet(sel.id, target.id)
@@ -483,7 +488,8 @@ fun HomeScreen(
                         rows = rows,
                         viewportWpx = viewportWpx,
                         carrying = carrying,
-                        freeMode = settings.freeMode,
+                        freeMode = settings.freeMode &&
+                            (!settings.freeWidgetsOnly || sel.type != HomeItem.APP && sel.type != HomeItem.SHORTCUT && sel.type != HomeItem.FOLDER),
                         onCarry = { carrying = it },
                         onEdge = { dir ->
                             scope.launch {
@@ -624,8 +630,11 @@ fun HomeScreen(
             ) {
                 Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp)) {
                     TextButton(onClick = { editItem = selectedItem }) { Text("詳細") }
-                    if (selectedItem.type == HomeItem.APP) {
+                    if (selectedItem.type == HomeItem.APP || selectedItem.type == HomeItem.SHORTCUT) {
                         TextButton(onClick = { folderPickItem = selectedItem }) { Text("フォルダへ") }
+                    }
+                    if (selectedItem.type == HomeItem.APP) {
+                        TextButton(onClick = { appMenuItem = selectedItem }) { Text("ショートカット・情報") }
                     }
                     if (selectedItem.type == HomeItem.WIDGET || selectedItem.type == HomeItem.STACK) {
                         TextButton(onClick = { fitWidth(selectedItem) }) { Text("幅いっぱいに") }
@@ -707,7 +716,7 @@ fun HomeScreen(
             QuickPanel(
                 apps = apps,
                 quickApps = settings.quickApps,
-                notifs = badges,
+                notifs = quickHistory,
                 mediaState = mediaState,
                 media = media,
                 onLaunch = {
@@ -848,6 +857,36 @@ fun HomeScreen(
         MenuDialog(title = "ホーム画面", entries = entries, onDismiss = { emptyMenu = false })
     }
 
+    appMenuItem?.let { item ->
+        val app = appMap[item.appKey]
+        val shortcuts = remember(item.id) { ShortcutHelper.list(context, item.pkg) }
+        MenuDialog(
+            title = app?.label ?: "アプリ",
+            entries = buildList {
+                shortcuts.forEach { (sid, label) ->
+                    add(label to {
+                        appMenuItem = null
+                        if (!ShortcutHelper.launch(context, item.pkg, sid)) toast(context, "ショートカットを開けません")
+                    })
+                }
+                add("アプリ情報" to {
+                    appMenuItem = null
+                    runCatching {
+                        context.startActivity(
+                            Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse("package:${item.pkg}"))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    }
+                })
+                add("通知を見る" to {
+                    appMenuItem = null
+                    notifPkg = item.pkg
+                })
+            },
+            onDismiss = { appMenuItem = null },
+        )
+    }
+
     badgeMenuItem?.let { item ->
         val app = appMap[item.appKey]
         MenuDialog(
@@ -983,6 +1022,11 @@ fun HomeScreen(
                     else toast(context, "ホーム画面に空きがありません")
                 },
                 onRemoveFromFolder = { vm.removeFromFolder(folder.id, it.key) },
+                onLaunchShortcut = { pkg, id ->
+                    openFolderId = null
+                    if (!ShortcutHelper.launch(context, pkg, id)) toast(context, "ショートカットを開けません")
+                },
+                onRemoveEntry = { vm.removeFromFolder(folder.id, it) },
                 onAddApp = { vm.addToFolder(folder.id, it.key) },
                 onRename = { vm.renameFolder(folder.id, it) },
                 onDelete = {
@@ -1058,6 +1102,13 @@ fun HomeScreen(
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                                 )
+                                TextButton(
+                                    onClick = {
+                                        iconSetManageId = null
+                                        dtapItemId = k.id
+                                    },
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+                                ) { Text(if (k.dtap.isEmpty()) "ダブルタップ" else "ダブルタップ✓") }
                                 TextButton(onClick = { vm.moveStackChild(k.id, -1) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text("↑") }
                                 TextButton(onClick = { vm.moveStackChild(k.id, 1) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text("↓") }
                                 TextButton(onClick = { vm.removeItem(k.id) }) { Text("外す") }
@@ -1314,6 +1365,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 locked = editing,
                 badges = env.badges,
                 onLaunch = env.onLaunch,
+                onDoubleTap = env.onDoubleTap,
                 onSelect = { env.onSelect(item.id) },
             )
             HomeItem.SEARCH -> SearchBarTile(
@@ -1667,8 +1719,9 @@ private fun MediaBar(
                 ?: (if (ink > 0.5f) Color.Black else Color.White)
             val big = if (buttonSp > 0) (buttonSp * 1.8f).sp else (h.value * 0.75f).coerceIn(28f, 56f).sp
             Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                val items = if (showAll) listOf("⏮", if (state.playing) "⏸" else "▶", "⏭") else listOf(if (state.playing) "⏸" else "▶")
-                items.forEachIndexed { i, label ->
+                val items = if (showAll) listOf(MediaGlyphKind.PREV, if (state.playing) MediaGlyphKind.PAUSE else MediaGlyphKind.PLAY, MediaGlyphKind.NEXT)
+                else listOf(if (state.playing) MediaGlyphKind.PAUSE else MediaGlyphKind.PLAY)
+                items.forEachIndexed { i, kind ->
                     Box(
                         Modifier
                             .weight(1f)
@@ -1681,7 +1734,7 @@ private fun MediaBar(
                                 }
                             },
                         contentAlignment = Alignment.Center,
-                    ) { Text(label, fontSize = big, color = btnColor.copy(alpha = 0.32f)) }
+                    ) { MediaGlyph(kind, btnColor.copy(alpha = 0.32f), big.value.dp) }
                 }
             }
             Column(
@@ -1762,13 +1815,13 @@ private fun MediaBar(
                 }
             }
             if (showAll) {
-                TextButton(onClick = { media.previous() }, colors = colors, contentPadding = pad) { Text("⏮", fontSize = btnSize) }
+                TextButton(onClick = { media.previous() }, colors = colors, contentPadding = pad) { MediaGlyph(MediaGlyphKind.PREV, onSurface, btnSize.value.dp) }
             }
             TextButton(onClick = { media.playPause() }, colors = colors, contentPadding = pad) {
-                Text(if (state.playing) "⏸" else "▶", fontSize = btnSize)
+                MediaGlyph(if (state.playing) MediaGlyphKind.PAUSE else MediaGlyphKind.PLAY, onSurface, btnSize.value.dp)
             }
             if (showAll) {
-                TextButton(onClick = { media.next() }, colors = colors, contentPadding = pad) { Text("⏭", fontSize = btnSize) }
+                TextButton(onClick = { media.next() }, colors = colors, contentPadding = pad) { MediaGlyph(MediaGlyphKind.NEXT, onSurface, btnSize.value.dp) }
             }
         }
     }
