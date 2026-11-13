@@ -56,6 +56,31 @@ class LauncherPrefs(context: Context) {
         sp.edit().putString(KEY_FOLDERS, Folder.listToJson(list).toString()).apply()
     }
 
+    fun loadStringMap(key: String): Map<String, String> = runCatching {
+        val o = JSONObject(sp.getString(key, "{}"))
+        buildMap<String, String> {
+            val keys = o.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                o.optString(k).takeIf { it.isNotBlank() }?.let { put(k, it) }
+            }
+        }
+    }.getOrDefault(emptyMap())
+
+    fun saveStringMap(key: String, map: Map<String, String>) {
+        val o = JSONObject()
+        map.forEach { (k, v) -> o.put(k, v) }
+        sp.edit().putString(key, o.toString()).apply()
+    }
+
+    /** 検索履歴。"q:ことば" または "app:pkg/cls"。新しい順。 */
+    fun loadHistory(): List<String> =
+        runCatching { LayoutJson.stringsFromJson(JSONArray(sp.getString(KEY_HISTORY, "[]"))) }.getOrDefault(emptyList())
+
+    fun saveHistory(list: List<String>) {
+        sp.edit().putString(KEY_HISTORY, LayoutJson.stringsToJson(list).toString()).apply()
+    }
+
     /** 読み仮名(アプリ名検索用)。key = "pkg/cls" */
     fun loadYomi(): Map<String, String> = runCatching {
         val o = JSONObject(sp.getString(KEY_YOMI, "{}"))
@@ -117,7 +142,7 @@ class LauncherPrefs(context: Context) {
         sp.edit().putString(key, LayoutJson.itemsToJson(items).toString()).apply()
     }
 
-    private companion object {
+    companion object {
         const val KEY_SETTINGS = "settings"
         const val KEY_ITEMS = "items"
         const val KEY_PENDING = "pending_widgets"
@@ -126,6 +151,9 @@ class LauncherPrefs(context: Context) {
         const val KEY_FOLDERS = "folders"
         const val KEY_LAST_LAUNCH = "last_launch"
         const val KEY_YOMI = "yomi"
+        const val KEY_HISTORY = "search_history"
+        const val KEY_DOCK_DTAP = "dock_dtap"
+        const val KEY_CATEGORIES = "categories"
         const val KEY_PINS = "pending_pins"
         const val KEY_LAYOUT_V2 = "layout_v2_done"
     }

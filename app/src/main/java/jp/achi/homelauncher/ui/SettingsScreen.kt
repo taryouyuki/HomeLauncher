@@ -31,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Scaffold
@@ -65,6 +66,41 @@ import java.util.Date
 import java.util.Locale
 
 private val TABS = listOf("ホーム", "ドック", "ウィジェット・バー", "アプリ一覧", "色・外観", "その他")
+
+/** 設定内検索の索引(項目名 → タブ番号)。 */
+private val SETTING_INDEX: List<Pair<String, Int>> = listOf(
+    "列数 行数 ページ数 グリッド" to 0,
+    "ループ 最初に戻る 1ページ目" to 0,
+    "メインのホーム画面 最初に表示するページ" to 0,
+    "余白 周りの余白 マージン" to 0,
+    "アイコンサイズ アイコンの大きさ" to 0,
+    "アイコンの不透明度 透明度" to 0,
+    "アプリ名 1行 2行 2段 ラベル 文字サイズ" to 0,
+    "テーマアイコン 電気反映 Androidのテーマ" to 0,
+    "アイコンサイズを統一" to 0,
+    "配置 押し出し ずらす 被せる 重なり" to 0,
+    "レイアウトをロック" to 0,
+    "編集ボタン 編集モード" to 0,
+    "自由配置モード" to 0,
+    "自動調整 自動整列 整列" to 0,
+    "アイコンの形 ハート 多角形" to 0,
+    "通知バッジ" to 0,
+    "ドック 縦幅 アイコン数" to 1,
+    "ドックのダブルタップ" to 1,
+    "ウィジェットの不透明度 透明度" to 2,
+    "検索バー メディアバー" to 2,
+    "メディアのボタンサイズ 曲名 重ねる 再生中アプリ Bluetooth" to 2,
+    "アイコンセット ページ切り替え" to 2,
+    "アプリ一覧 列数 並び順 ソート カテゴリー順 カテゴリー" to 3,
+    "アプリ一覧の背景" to 3,
+    "かわいいテーマ ゆめかわ 儚い プリセット" to 4,
+    "Dynamic Color ダークテーマ 色" to 4,
+    "ホーム画面の色 基準色" to 4,
+    "フォント 書体" to 4,
+    "検索履歴 Web検索URL 振動" to 5,
+    "デフォルトのホームアプリ" to 5,
+    "バックアップ 復元" to 5,
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -162,6 +198,28 @@ fun SettingsScreen(
                 TextButton(onClick = { showPreview = !showPreview }, modifier = Modifier.padding(start = 8.dp)) {
                     Text(if (showPreview) "プレビューを隠す" else "プレビューを表示")
                 }
+                var settingQuery by remember { mutableStateOf("") }
+                OutlinedTextField(
+                    value = settingQuery,
+                    onValueChange = { settingQuery = it },
+                    singleLine = true,
+                    placeholder = { Text("設定を検索(例: フォント、余白、透明度)") },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                )
+                if (settingQuery.isNotBlank()) {
+                    val hits = SETTING_INDEX.filter { (label, _) ->
+                        jp.achi.homelauncher.data.Kana.matches(label, settingQuery)
+                    }
+                    Column(Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+                        if (hits.isEmpty()) Text("見つかりません", modifier = Modifier.padding(12.dp), color = MaterialTheme.colorScheme.outline)
+                        hits.forEach { (label, t) ->
+                            TextButton(onClick = {
+                                tab = t
+                                settingQuery = ""
+                            }) { Text("$label  —  ${TABS[t]}") }
+                        }
+                    }
+                }
                 ScrollableTabRow(selectedTabIndex = tab, edgePadding = 8.dp) {
                     TABS.forEachIndexed { i, title ->
                         Tab(selected = tab == i, onClick = { tab = i }, text = { Text(title) })
@@ -180,11 +238,37 @@ fun SettingsScreen(
                             IntSliderRow("列数", s.gridCols, 3, 8) { v -> update { it.copy(gridCols = v) } }
                             IntSliderRow("行数", s.gridRows, 3, 10) { v -> update { it.copy(gridRows = v) } }
                             IntSliderRow("ページ数", s.pageCount, 1, 8) { v -> update { it.copy(pageCount = v) } }
+                            SwitchRow("最後のページの次は1ページ目に戻る(ループ)", s.homeLoop) { v -> update { it.copy(homeLoop = v) } }
+                            IntSliderRow("メインのホーム画面(最初に表示するページ)", s.homePage.coerceIn(0, s.pageCount - 1) + 1, 1, s.pageCount.coerceAtLeast(2)) { v ->
+                                update { it.copy(homePage = (v - 1).coerceIn(0, it.pageCount - 1)) }
+                            }
+                            IntSliderRow("周りの余白", s.marginDp, 0, 40, "dp") { v -> update { it.copy(marginDp = v) } }
                             Section("アイコン")
                             IntSliderRow("アイコンサイズ", s.iconSizeDp, 32, 96, "dp") { v -> update { it.copy(iconSizeDp = v) } }
                             PercentSliderRow("アイコンの不透明度", s.iconAlpha, 0.1f, 1f) { v -> update { it.copy(iconAlpha = v) } }
                             SwitchRow("アプリ名を表示", s.showLabels) { v -> update { it.copy(showLabels = v) } }
                             IntSliderRow("アプリ名の文字サイズ", s.labelSizeSp, 8, 16, "sp") { v -> update { it.copy(labelSizeSp = v) } }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                                FilterChip(s.labelLines == 1, { update { it.copy(labelLines = 1) } }, { Text("アプリ名 1行") })
+                                FilterChip(s.labelLines == 2, { update { it.copy(labelLines = 2) } }, { Text("アプリ名 2行") })
+                            }
+                            Text("ホームのアイコンの見た目(テーマアイコン)", style = MaterialTheme.typography.bodyLarge)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                                FilterChip(s.themedIcons == "auto", { update { it.copy(themedIcons = "auto") } }, { Text("Androidの設定に従う") })
+                                FilterChip(s.themedIcons == "on", { update { it.copy(themedIcons = "on") } }, { Text("常にオン") })
+                                FilterChip(s.themedIcons == "off", { update { it.copy(themedIcons = "off") } }, { Text("オフ") })
+                            }
+                            Text(
+                                "Android 13以上で、対応アイコンを壁紙の色に合わせたテーマアイコンにします。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                            var unifyDp by remember { mutableStateOf(s.iconSizeDp) }
+                            IntSliderRow("置いたアイコンのサイズを統一", unifyDp, 32, 96, "dp") { v -> unifyDp = v }
+                            OutlinedButton(onClick = {
+                                vm.unifyIconSize(unifyDp)
+                                toast(context, "置いてあるアイコンのサイズを${unifyDp}dpに統一しました")
+                            }) { Text("このサイズに統一する") }
                             Section("配置")
                             Text("配置先に既にあるアイテムがあるとき", style = MaterialTheme.typography.bodyLarge)
                             Text(
@@ -235,6 +319,20 @@ fun SettingsScreen(
                                     toast(context, "アイコン・文字・ドックの大きさを自動調整しました")
                                 }) { Text("アプリアイコンのみ") }
                             }
+                            Text("整列(重ならないよう詰めて並べ直す)", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                OutlinedButton(onClick = {
+                                    vm.arrangeIcons()
+                                    toast(context, "アプリアイコンを整列しました")
+                                }) { Text("整列: アイコンのみ") }
+                                OutlinedButton(onClick = {
+                                    vm.arrangeWidgets()
+                                    toast(context, "ウィジェットを整列しました")
+                                }) { Text("整列: ウィジェットのみ") }
+                            }
                             Text(
                                 "アイコン: アイコン・文字・ドックの大きさをセルに合わせます。ウィジェット: 推奨(最小)サイズに合わせ、はみ出し・重なりを整えます。",
                                 style = MaterialTheme.typography.bodySmall,
@@ -271,6 +369,11 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.outline,
                             )
                             PercentSliderRow("アイコンの不透明度(ドック専用)", s.dockIconAlpha, 0.1f, 1f) { v -> update { it.copy(dockIconAlpha = v) } }
+                            Text(
+                                "ドックのアイコンを長押し →「ダブルタップ設定」で、ダブルタップで開く別のアプリ/ショートカットを決められます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
                             SwitchRow("最後のページの次は最初に戻る", s.dockLoop) { v -> update { it.copy(dockLoop = v) } }
                         }
 
@@ -278,7 +381,7 @@ fun SettingsScreen(
                             Section("ウィジェット")
                             PercentSliderRow("全体の不透明度", s.widgetGlobalAlpha) { v -> update { it.copy(widgetGlobalAlpha = v) } }
                             Text(
-                                "個別設定: ウィジェットを長押し → 上部バーの「詳細」",
+                                "このウィジェットだけの透明度: ウィジェットを長押し → 上部バーの「透明度」(スタックも可)",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline,
                             )
@@ -292,6 +395,12 @@ fun SettingsScreen(
                                 IntSliderRow("ボタンの大きさ", s.mediaButtonSp, 14, 44, "sp") { v -> update { it.copy(mediaButtonSp = v) } }
                             }
                             SwitchRow("ボタンを透かして曲名を重ねて表示", s.mediaOverlay) { v -> update { it.copy(mediaOverlay = v) } }
+                            SwitchRow("再生中のアプリと出力先(Bluetooth等)を表示", s.mediaShowSource) { v -> update { it.copy(mediaShowSource = v) } }
+                            Text(
+                                "アイコンセット: ホームの空き地を長押し →「アイコンセットを作成」。枠のマス数ぶんのアイコンが1ページになり、スワイプで切り替わります(最後の次は最初へ)。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
                             Section("メディア操作")
                             Text(
                                 if (mediaState.permitted) "通知アクセス: 許可済み(曲名の表示と操作が可能)"
@@ -315,6 +424,7 @@ fun SettingsScreen(
                                 FilterChip(s.drawerSort == SortMode.INSTALL, { update { it.copy(drawerSort = SortMode.INSTALL) } }, { Text("ダウンロード順") })
                                 FilterChip(s.drawerSort == SortMode.FREQUENT, { update { it.copy(drawerSort = SortMode.FREQUENT) } }, { Text("よく使う順") })
                                 FilterChip(s.drawerSort == SortMode.UPDATED, { update { it.copy(drawerSort = SortMode.UPDATED) } }, { Text("更新順") })
+                                FilterChip(s.drawerSort == SortMode.CATEGORY, { update { it.copy(drawerSort = SortMode.CATEGORY) } }, { Text("カテゴリー順") })
                             }
                             Section("背景")
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -328,6 +438,18 @@ fun SettingsScreen(
                         }
 
                         4 -> {
+                            Section("かわいいテーマ(色・背景・アイコンの形をまとめて設定)")
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                jp.achi.homelauncher.data.ThemePresets.all.forEach { p ->
+                                    FilterChip(false, {
+                                        vm.applyTheme(p)
+                                        toast(context, "「${p.name}」を適用しました")
+                                    }, { Text(p.name) })
+                                }
+                            }
                             Section("設定画面などの色(アプリ全体)")
                             SwitchRow("システムの色(Dynamic Color)を使う", s.useDynamicColor) { v -> update { it.copy(useDynamicColor = v) } }
                             Text("テーマ", style = MaterialTheme.typography.bodyLarge)
@@ -363,6 +485,7 @@ fun SettingsScreen(
 
                         else -> {
                             Section("操作")
+                            IntSliderRow("検索履歴の件数(0で記録しない)", s.searchHistoryCount, 0, 10) { v -> update { it.copy(searchHistoryCount = v) } }
                             SwitchRow("長押しの振動", s.haptics) { v -> update { it.copy(haptics = v) } }
                             OutlinedTextField(
                                 value = searchUrlText,

@@ -131,6 +131,12 @@ class AppRepository(context: Context) {
                     className = ri.activityInfo.name,
                     updatedAt = updated,
                     installedAt = installed,
+                    category = runCatching { ri.activityInfo.applicationInfo.category }.getOrDefault(-1),
+                    isGame = runCatching {
+                        @Suppress("DEPRECATION")
+                        (ri.activityInfo.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_IS_GAME) != 0
+                    }.getOrDefault(false),
+                    isSystem = (ri.activityInfo.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0,
                 )
             }
             .distinctBy { it.key }

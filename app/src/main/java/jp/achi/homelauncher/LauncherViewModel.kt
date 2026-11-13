@@ -37,6 +37,11 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     val pendingRebind = MutableStateFlow(prefs.loadPending())
     /** 読み仮名(アプリ名検索用)。key = "pkg/cls" */
     val yomi = MutableStateFlow(prefs.loadYomi())
+    /** ドックのアイコンのダブルタップ設定。key = ドックの項目、value = "app:pkg/cls" か "sc:pkg|id" */
+    val dockDtap = MutableStateFlow(prefs.loadStringMap(LauncherPrefs.KEY_DOCK_DTAP))
+    val searchHistory = MutableStateFlow(prefs.loadHistory())
+    /** 手動で決めたアプリのカテゴリー。key = アプリのkey */
+    val categories = MutableStateFlow(prefs.loadStringMap(LauncherPrefs.KEY_CATEGORIES))
 
     /** 直近の配置結果(フォルダ作成のように戻り値で伝えにくい操作用)。 */
     var lastPlace: PlaceResult = PlaceResult.PLACED
@@ -75,6 +80,81 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         prefs.saveYomi(yomi.value)
     }
 
+    fun setCategory(appKey: String, name: String) {
+        categories.update { if (name.isBlank()) it - appKey else it + (appKey to name.trim()) }
+        prefs.saveStringMap(LauncherPrefs.KEY_CATEGORIES, categories.value)
+    }
+
+    fun arrangeIcons() {
+        val s = settings.value
+        items.update { AutoLayout.arrangeIcons(it, s.gridCols, s.gridRows, s.pageCount) }
+        persistItems()
+    }
+
+    fun arrangeWidgets() {
+        val s = settings.value
+        items.update { AutoLayout.arrangeWidgets(it, s.gridCols, s.gridRows, s.pageCount) }
+        persistItems()
+    }
+
+    /** アイコンセット(既定 3×3)を置く。 */
+    fun createIconSet(at: CellAt? = null): PlaceResult {
+        val s = settings.value
+        val sx = minOf(3, s.gridCols)
+        val sy = minOf(3, s.gridRows)
+        return place(sx, sy, at) { p, x, y -> HomeItem(type = HomeItem.ICONS, page = p, x = x, y = y, spanX = sx, spanY = sy) }
+    }
+
+    /** アイコンセットの末尾にアプリを追加する(並びは子の順。枠の大きさごとに自動でセットに分かれる)。 */
+    fun addToIconSet(setId: String, packageName: String, className: String) {
+        if (items.value.none { it.id == setId && it.type == HomeItem.ICONS }) return
+        items.update { it + HomeItem(type = HomeItem.APP, page = 0, x = 0, y = 0, pkg = packageName, cls = className, parent = setId) }
+        persistItems()
+    }
+
+    /** ホームに置いてあるアプリを、アイコンセットへ移す(ドラッグで重ねたとき)。 */
+    fun moveHomeAppToIconSet(draggedId: String, setId: String): Boolean {
+        val dragged = items.value.firstOrNull { it.id == draggedId && it.type == HomeItem.APP && it.parent.isEmpty() } ?: return false
+        if (items.value.none { it.id == setId && it.type == HomeItem.ICONS }) return false
+        items.update { list -> list.filter { it.id != draggedId } + dragged.copy(parent = setId, page = 0, x = 0, y = 0, free = false) }
+        persistItems()
+        return true
+    }
+
+    fun setDockDtap(entry: String, code: String) {
+        dockDtap.update { if (code.isEmpty()) it - entry else it + (entry to code) }
+        prefs.saveStringMap(LauncherPrefs.KEY_DOCK_DTAP, dockDtap.value)
+    }
+
+    /** 検索履歴に追加(新しい順・重複なし)。件数0なら記録しない。 */
+    fun addHistory(entry: String) {
+        if (settings.value.searchHistoryCount <= 0) return
+        searchHistory.update { (listOf(entry) + (it - entry)).take(20) }
+        prefs.saveHistory(searchHistory.value)
+    }
+
+    fun clearHistory() {
+        searchHistory.value = emptyList()
+        prefs.saveHistory(emptyList())
+    }
+
+    fun applyTheme(p: jp.achi.homelauncher.data.ThemePreset) =
+        updateSettings { jp.achi.homelauncher.data.ThemePresets.apply(it, p) }
+
+    /** 設置済みのアイコン(アプリ・ショートカット・フォルダ)を指定サイズに統一する。大きさを変えていたものは1マスに戻す。 */
+    fun unifyIconSize(dp: Int) {
+        updateSettings { it.copy(iconSizeDp = dp.coerceIn(32, 96), dockIconSizeDp = dp.coerceIn(24, 120)) }
+        val s = settings.value
+        items.update { list ->
+            list.map { i ->
+                if (i.parent.isEmpty() && (i.type == HomeItem.APP || i.type == HomeItem.SHORTCUT || i.type == HomeItem.FOLDER)) {
+                    GridLogic.clamp(i.copy(spanX = 1, spanY = 1, fw = 1f, fh = 1f), s.gridCols, s.gridRows)
+                } else i
+            }
+        }
+        persistItems()
+    }
+
     fun setDrawerSort(mode: SortMode) = updateSettings { it.copy(drawerSort = mode) }
 
     // ---- 起動 ----
@@ -106,7 +186,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         val fixed = GridLogic.clamp(item, s.gridCols, s.gridRows)
             .let { it.copy(page = it.page.coerceIn(0, s.pageCount - 1)) }
-        val (list, collided) = GridLogic.placeWithPolicy(items.value, fixed, s.overlapPolicy, s.gridRows, s.gridCols)
+        val (list, collided) = GridLogic.placeWithPolicy(items.value, fixed, s.overlapPolicy, s.gridRows, s.gridCols, s.pageCount)
         items.value = list
         persistItems()
         return collided

@@ -89,11 +89,11 @@ class GridLogicTest {
     }
 
     @Test
-    fun freeItemsDoNotBlockCellsOrCollide() {
+    fun freeItemsBlockTheirCellAndCollide() {
         val f = app(0, 1, 1).copy(free = true, fx = 1.3f, fy = 1.2f)
-        assertTrue(GridLogic.isFree(listOf(f), 0, 1, 1, 1, 1))
+        assertFalse(GridLogic.isFree(listOf(f), 0, 1, 1, 1, 1))
         val (r, hit) = GridLogic.placeWithPolicy(listOf(f), app(0, 1, 1), "push_down", 4)
-        assertFalse(hit)
+        assertTrue(hit)
         assertEquals(2, r.size)
     }
 

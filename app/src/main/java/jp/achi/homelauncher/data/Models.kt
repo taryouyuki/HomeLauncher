@@ -18,12 +18,52 @@ data class AppInfo(
     val work: Boolean = false,
     /** work=true のとき、プロファイルのユーザー識別番号 */
     val userSerial: Long = 0L,
+    /** ApplicationInfo.category(-1 は未設定) */
+    val category: Int = -1,
+    val isGame: Boolean = false,
+    val isSystem: Boolean = false,
 ) {
     val key: String get() = if (work) "w$userSerial:$packageName/$className" else "$packageName/$className"
 }
 
 /** 名前順 / 最終起動順 / ダウンロード(インストール)順 / よく使う順(起動回数) / 更新順 */
-enum class SortMode { NAME, LAST_LAUNCH, INSTALL, FREQUENT, UPDATED }
+enum class SortMode { NAME, LAST_LAUNCH, INSTALL, FREQUENT, UPDATED, CATEGORY }
+
+/** アプリのカテゴリー(ゲーム・SNS・ツール等)。OSの分類とパッケージ名から自動で仕分けし、手動で上書きもできる。 */
+object AppCategory {
+    val ORDER = listOf("ゲーム", "SNS・通信", "音楽・動画", "写真", "ニュース", "地図・移動", "仕事・効率", "ツール", "システム", "その他")
+
+    fun auto(app: AppInfo): String {
+        if (app.isGame || app.category == 0) return "ゲーム"
+        when (app.category) {
+            1, 2 -> return "音楽・動画"
+            3 -> return "写真"
+            4 -> return "SNS・通信"
+            5 -> return "ニュース"
+            6 -> return "地図・移動"
+            7 -> return "仕事・効率"
+            8 -> return "ツール"
+        }
+        val p = (app.packageName + " " + app.label).lowercase()
+        fun has(vararg k: String) = k.any { p.contains(it) }
+        return when {
+            has("game", "ゲーム") -> "ゲーム"
+            has("camera", "photo", "gallery", "カメラ", "写真") -> "写真"
+            has("music", "video", "player", "radio", "podcast", "youtube", "音楽", "動画") -> "音楽・動画"
+            has("mail", "messag", "chat", "line", "twitter", "instagram", "facebook", "discord", "dialer", "contacts", "電話", "連絡先", "メール") -> "SNS・通信"
+            has("maps", "navi", "transit", "地図", "乗換") -> "地図・移動"
+            has("docs", "office", "note", "calendar", "drive", "sheet", "keep", "メモ", "カレンダー") -> "仕事・効率"
+            has("calc", "clock", "torch", "flashlight", "scanner", "vpn", "file", "電卓", "時計", "ファイル") -> "ツール"
+            app.isSystem -> "システム"
+            else -> "その他"
+        }
+    }
+
+    fun of(app: AppInfo, manual: Map<String, String>): String = manual[app.key] ?: auto(app)
+
+    /** 表示順。定義済みのカテゴリー → 自分で作った名前(五十音) の順。 */
+    fun order(name: String): Int = ORDER.indexOf(name).let { if (it < 0) ORDER.size else it }
+}
 
 object AppSorter {
     /**
@@ -35,6 +75,7 @@ object AppSorter {
         mode: SortMode,
         counts: Map<String, Int>,
         lastLaunch: Map<String, Long> = emptyMap(),
+        categories: Map<String, String> = emptyMap(),
     ): List<AppInfo> {
         val collator = Collator.getInstance(Locale.JAPANESE)
         val byName = Comparator<AppInfo> { a, b -> collator.compare(a.label, b.label) }
@@ -45,6 +86,11 @@ object AppSorter {
             SortMode.INSTALL -> apps.sortedWith(compareByDescending<AppInfo> { it.installedAt }.then(byName))
             SortMode.FREQUENT -> apps.sortedWith(compareByDescending<AppInfo> { counts[it.key] ?: 0 }.then(byName))
             SortMode.UPDATED -> apps.sortedWith(compareByDescending<AppInfo> { it.updatedAt }.then(byName))
+            SortMode.CATEGORY -> apps.sortedWith(
+                compareBy<AppInfo> { AppCategory.order(AppCategory.of(it, categories)) }
+                    .thenBy { AppCategory.of(it, categories) }
+                    .then(byName),
+            )
         }
     }
 
@@ -113,6 +159,8 @@ data class HomeItem(
         const val WIDGET = "widget"
         const val FOLDER = "folder"
         const val STACK = "stack"
+        /** アイコンセット: 数個〜9個のアプリを1つの枠にまとめ、左右スワイプでセットを切り替える(最後の次は最初に戻る)。子は parent = このid */
+        const val ICONS = "icons"
         const val SEARCH = "search"
         const val MEDIA = "media"
         /** ブラウザ等から「ホーム画面に追加」されたショートカット。pkg=パッケージ, cls=ショートカットID, ref=表示名 */
@@ -190,7 +238,7 @@ object GridLogic {
         a.x < x + sx && x < a.x + a.spanX && a.y < y + sy && y < a.y + a.spanY
 
     fun isFree(items: List<HomeItem>, page: Int, x: Int, y: Int, sx: Int, sy: Int): Boolean =
-        items.none { it.parent.isEmpty() && !it.free && it.page == page && overlaps(it, x, y, sx, sy) }
+        items.none { it.parent.isEmpty() && it.page == page && overlaps(it, x, y, sx, sy) }
 
     /** 空きセルを探す。見つからなければ null。戻り値は Triple(page, x, y)。 */
     fun findFreeCell(
@@ -223,11 +271,12 @@ object GridLogic {
         policy: String,
         rows: Int,
         cols: Int = 4,
+        pageCount: Int = 1,
     ): Pair<List<HomeItem>, Boolean> {
         val result = items.filter { it.id != mover.id }.toMutableList()
         result.add(mover)
         fun hits(cur: HomeItem) = result.filter {
-            it.id != cur.id && it.parent.isEmpty() && !it.free && !cur.free && it.page == cur.page &&
+            it.id != cur.id && it.parent.isEmpty() && !cur.free && it.page == cur.page &&
                 overlaps(it, cur.x, cur.y, cur.spanX, cur.spanY)
         }
         val collided = hits(mover).isNotEmpty()
@@ -249,10 +298,18 @@ object GridLogic {
                         (cur.y - h.spanY).coerceAtLeast(0)
                     }
                     if (ny == h.y) continue // これ以上動けない場合は重なったままにする
-                    val moved = h.copy(y = ny)
+                    val moved = h.copy(y = ny, free = false)
                     result[result.indexOfFirst { it.id == h.id }] = moved
                     pending.add(moved)
                 }
+            }
+        }
+        // ずらしきれず重なったままの項目は、空いているマスへ移す(重ねる設定のときは何もしない)
+        if (collided && policy != "overlap") {
+            for (h in hits(mover)) {
+                val rest = result.filter { it.id != h.id }
+                val cell = findFreeCell(rest, pageCount, cols, rows, h.spanX, h.spanY) ?: continue
+                result[result.indexOfFirst { it.id == h.id }] = h.copy(page = cell.first, x = cell.second, y = cell.third, free = false)
             }
         }
         return result to collided
@@ -265,7 +322,7 @@ object GridLogic {
      */
     fun shiftInsert(others: List<HomeItem>, mover: HomeItem, cols: Int, rows: Int): List<HomeItem>? {
         val total = cols * rows
-        val page = others.filter { it.parent.isEmpty() && !it.free && it.page == mover.page }
+        val page = others.filter { it.parent.isEmpty() && it.page == mover.page }
         fun at(c: Int): HomeItem? = page.firstOrNull { overlaps(it, c % cols, c / cols, 1, 1) }
         val chain = mutableListOf<HomeItem>()
         var cur = mover.y * cols + mover.x
@@ -319,6 +376,51 @@ object AutoLayout {
             dockIconSizeDp = icon,
             drawerIconSizeDp = icon.coerceIn(40, 72),
         )
+    }
+
+    private fun isIconType(i: HomeItem) =
+        i.parent.isEmpty() && (i.type == HomeItem.APP || i.type == HomeItem.SHORTCUT || i.type == HomeItem.FOLDER)
+
+    /** アイコンだけを整列: アイコンを現在の並び順のまま、空いているマスへ左上から詰める(ウィジェットなどは動かさない)。 */
+    fun arrangeIcons(items: List<HomeItem>, cols: Int, rows: Int, pageCount: Int): List<HomeItem> {
+        val icons = items.filter(::isIconType).sortedWith(compareBy({ it.page }, { it.y }, { it.x }))
+        val placed = items.filter { it.parent.isEmpty() && !isIconType(it) }.toMutableList()
+        val out = HashMap<String, HomeItem>()
+        var p = 0
+        var x = 0
+        var y = 0
+        for (icon in icons) {
+            var done = false
+            while (p < pageCount && !done) {
+                if (GridLogic.isFree(placed, p, x, y, 1, 1)) {
+                    val n = icon.copy(page = p, x = x, y = y, spanX = 1, spanY = 1, free = false, fw = 1f, fh = 1f)
+                    placed.add(n)
+                    out[icon.id] = n
+                    done = true
+                }
+                x++
+                if (x >= cols) { x = 0; y++ }
+                if (y >= rows) { y = 0; p++ }
+            }
+        }
+        return items.map { out[it.id] ?: it }
+    }
+
+    /** ウィジェットだけを整列(ウィジェット・スタック・アイコンセット): アイコン等は動かさず、空きへ左上から詰める。 */
+    fun arrangeWidgets(items: List<HomeItem>, cols: Int, rows: Int, pageCount: Int): List<HomeItem> {
+        fun isBlock(i: HomeItem) = i.parent.isEmpty() &&
+            (i.type == HomeItem.WIDGET || i.type == HomeItem.STACK || i.type == HomeItem.ICONS)
+        val blocks = items.filter(::isBlock).sortedWith(compareBy({ it.page }, { it.y }, { it.x }))
+        val placed = items.filter { it.parent.isEmpty() && !isBlock(it) }.toMutableList()
+        val out = HashMap<String, HomeItem>()
+        for (b0 in blocks) {
+            val b = GridLogic.clamp(b0.copy(free = false), cols, rows)
+            val cell = GridLogic.findFreeCell(placed, pageCount, cols, rows, b.spanX, b.spanY)
+            val n = if (cell != null) b.copy(page = cell.first, x = cell.second, y = cell.third) else b
+            placed.add(n)
+            out[b0.id] = n
+        }
+        return items.map { out[it.id] ?: it }
     }
 
     /** 自由配置をマスに揃え、はみ出しを直し、重なった項目は空きマスへ移す。 */

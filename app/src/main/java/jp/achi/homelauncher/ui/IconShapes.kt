@@ -63,17 +63,23 @@ private val FLOWER = GenericShape { size, _ ->
 }
 
 /** やわらかいハート(媒介変数曲線)。アイコンが隠れすぎないよう、箱いっぱいに広げて描く。 */
+/** 手描き風のやわらかいハート。左右をわざと少し非対称にして、先端も丸める。 */
 private val HEART = GenericShape { size, _ ->
-    val steps = 200
-    for (i in 0..steps) {
-        val t = 2.0 * PI * i / steps
-        val hx = 16.0 * sin(t).let { it * it * it }
-        val hy = 13.0 * cos(t) - 5.0 * cos(2 * t) - 2.0 * cos(3 * t) - cos(4 * t)
-        // hx は -16..16、hy はおよそ -17..12 → 0..1 に正規化
-        val x = ((hx + 16.0) / 32.0).toFloat() * size.width
-        val y = ((12.0 - hy) / 29.0).toFloat() * size.height
-        if (i == 0) moveTo(x, y) else lineTo(x, y)
-    }
+    val w = size.width
+    val h = size.height
+    fun x(v: Float) = v * w
+    fun y(v: Float) = v * h
+    moveTo(x(0.50f), y(0.30f))
+    // 左のふくらみ
+    cubicTo(x(0.44f), y(0.14f), x(0.28f), y(0.07f), x(0.16f), y(0.14f))
+    cubicTo(x(0.03f), y(0.22f), x(0.02f), y(0.42f), x(0.11f), y(0.56f))
+    // 左下 → 先端(丸め)
+    cubicTo(x(0.20f), y(0.70f), x(0.38f), y(0.82f), x(0.47f), y(0.92f))
+    cubicTo(x(0.49f), y(0.95f), x(0.53f), y(0.95f), x(0.56f), y(0.92f))
+    // 右下 → 右のふくらみ(少し大きめ)
+    cubicTo(x(0.67f), y(0.81f), x(0.84f), y(0.69f), x(0.91f), y(0.55f))
+    cubicTo(x(1.00f), y(0.39f), x(0.97f), y(0.19f), x(0.84f), y(0.12f))
+    cubicTo(x(0.71f), y(0.05f), x(0.55f), y(0.13f), x(0.50f), y(0.30f))
     close()
 }
 

@@ -134,6 +134,8 @@ private class HomeEnv(
     val badges: Map<String, List<BadgeStore.Notif>>,
     val onDoubleTap: (String) -> Unit,
     val onBadgeMenu: (HomeItem) -> Unit,
+    val dockDtap: Map<String, String>,
+    val onDockDtap: (String) -> Unit,
 )
 
 @Composable
@@ -161,6 +163,8 @@ fun HomeScreen(
     val appMap = remember(apps) { apps.associateBy { it.key } }
     val badges by BadgeStore.notifs.collectAsStateWithLifecycle()
     val yomi by vm.yomi.collectAsStateWithLifecycle()
+    val dockDtap by vm.dockDtap.collectAsStateWithLifecycle()
+    val searchHistory by vm.searchHistory.collectAsStateWithLifecycle()
 
     var selectedId by remember { mutableStateOf<String?>(null) }
     var carrying by remember { mutableStateOf(false) }
@@ -189,6 +193,10 @@ fun HomeScreen(
     /** ダブルタップ設定: 対象アプリ選択 → ショートカット選択 */
     var dtapItemId by remember { mutableStateOf<String?>(null) }
     var dtapApp by remember { mutableStateOf<AppInfo?>(null) }
+    /** アイコンセットの管理ダイアログ / アプリ追加ピッカー、ウィジェット単位の透明度ダイアログ */
+    var iconSetManageId by remember { mutableStateOf<String?>(null) }
+    var iconSetPickId by remember { mutableStateOf<String?>(null) }
+    var alphaItemId by remember { mutableStateOf<String?>(null) }
     /** 値が変わるとウィジェット等を作り直して画面を更新する */
     var refreshTick by remember { mutableIntStateOf(0) }
 
@@ -198,7 +206,13 @@ fun HomeScreen(
     val editModeRef by rememberUpdatedState(editMode)
     val selectedRef by rememberUpdatedState(selectedId)
 
-    val pagerState = rememberPagerState(pageCount = { settings.pageCount })
+    val pageCountNow = settings.pageCount.coerceAtLeast(1)
+    val loopHome = settings.homeLoop && pageCountNow > 1
+    val homeVirtual = if (loopHome) pageCountNow * 1000 else pageCountNow
+    val homeBase = if (loopHome) pageCountNow * 500 else 0
+    val mainPage = settings.homePage.coerceIn(0, pageCountNow - 1)
+    val pagerState = rememberPagerState(initialPage = homeBase + mainPage, pageCount = { homeVirtual })
+    val curPage = pagerState.currentPage % pageCountNow
     val selectedItem = items.firstOrNull { it.id == selectedId }
 
     LaunchedEffect(resetSignal) {
@@ -209,7 +223,7 @@ fun HomeScreen(
         carrying = false
         emptyMenu = false
         openFolderId = null
-        pagerState.scrollToPage(0)
+        pagerState.scrollToPage(homeBase + mainPage)
     }
 
     BackHandler(enabled = searchOpen) { searchOpen = false }
@@ -316,20 +330,26 @@ fun HomeScreen(
             .forEach { widgets.delete(it.widgetId) }
     }
 
-    /** ドラッグ移動・リサイズの確定。アイコンを別のアイコン/フォルダに重ねた場合はフォルダにまとめる。 */
-    fun commitMove(sel: HomeItem, page: Int, nx: Int, ny: Int, nsx: Int, nsy: Int) {
-        if (sel.type == HomeItem.APP && nsx == 1 && nsy == 1) {
-            val target = vm.items.value.firstOrNull { t ->
-                t.id != sel.id && t.parent.isEmpty() && t.page == page &&
-                    (t.type == HomeItem.APP || t.type == HomeItem.FOLDER) &&
-                    GridLogic.overlaps(t, nx, ny, 1, 1)
-            }
-            if (target != null && vm.mergeIntoFolder(sel.id, target.id)) {
-                selectedId = null
-                toast(context, "フォルダにまとめました")
-                return
-            }
+    /** アプリを、重なった先のアプリ/フォルダ/アイコンセットにまとめる。まとめたら true。 */
+    fun tryMerge(sel: HomeItem, page: Int, cx: Int, cy: Int): Boolean {
+        if (sel.type != HomeItem.APP) return false
+        val target = vm.items.value.firstOrNull { t ->
+            t.id != sel.id && t.parent.isEmpty() && t.page == page &&
+                (t.type == HomeItem.APP || t.type == HomeItem.FOLDER || t.type == HomeItem.ICONS) &&
+                GridLogic.overlaps(t, cx, cy, 1, 1)
+        } ?: return false
+        val ok = if (target.type == HomeItem.ICONS) vm.moveHomeAppToIconSet(sel.id, target.id)
+        else vm.mergeIntoFolder(sel.id, target.id)
+        if (ok) {
+            selectedId = null
+            toast(context, if (target.type == HomeItem.ICONS) "アイコンセットに追加しました" else "フォルダにまとめました")
         }
+        return ok
+    }
+
+    /** ドラッグ移動・リサイズの確定。アイコンを別のアイコン/フォルダ/アイコンセットに重ねた場合はまとめる。 */
+    fun commitMove(sel: HomeItem, page: Int, nx: Int, ny: Int, nsx: Int, nsy: Int) {
+        if (nsx == 1 && nsy == 1 && tryMerge(sel, page, nx, ny)) return
         val stored = vm.items.value.firstOrNull { it.id == sel.id } ?: return
         val collided = vm.placeAndResolve(stored.copy(page = page, x = nx, y = ny, spanX = nsx, spanY = nsy, free = false))
         if (collided) toast(context, vm.overlapMessage())
@@ -357,6 +377,8 @@ fun HomeScreen(
         badges = badges,
         onDoubleTap = { code -> launchDtap(context, vm, appMap, code) },
         onBadgeMenu = { badgeMenuItem = it },
+        dockDtap = dockDtap,
+        onDockDtap = { code -> launchDtap(context, vm, appMap, code) },
     )
 
     Box(
@@ -386,7 +408,7 @@ fun HomeScreen(
             },
     ) {
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars)) {
-            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(settings.marginDp.dp)) {
                 val cols = settings.gridCols
                 val rows = settings.gridRows
                 val cellW = maxWidth / cols
@@ -396,7 +418,8 @@ fun HomeScreen(
                 val viewportWpx = with(density) { maxWidth.toPx() }
                 LaunchedEffect(cellW, cellH) { cellDp = cellW.value to cellH.value }
 
-                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
+                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { vp ->
+                    val page = vp % pageCountNow
                     val shown = items
                         .filter { it.page == page && it.parent.isEmpty() }
                         .map { GridLogic.clamp(it, cols, rows) }
@@ -443,7 +466,7 @@ fun HomeScreen(
 
                 // 編集枠はページの外(ビューポート基準)に置き、ページをまたいでドラッグできるようにする
                 val sel = selectedItem?.takeIf { it.parent.isEmpty() }
-                if (sel != null && (sel.page == pagerState.currentPage || carrying)) {
+                if (sel != null && (sel.page == curPage || carrying)) {
                     EditFrame(
                         item = GridLogic.clamp(sel, cols, rows),
                         cellWpx = cellWpx,
@@ -457,15 +480,19 @@ fun HomeScreen(
                         onEdge = { dir ->
                             scope.launch {
                                 pagerState.animateScrollToPage(
-                                    (pagerState.currentPage + dir).coerceIn(0, vm.settings.value.pageCount - 1),
+                                    (pagerState.currentPage + dir).coerceIn(0, homeVirtual - 1),
                                 )
                             }
                         },
-                        onCommit = { nx, ny, nsx, nsy -> commitMove(sel, pagerState.currentPage, nx, ny, nsx, nsy) },
+                        onCommit = { nx, ny, nsx, nsy -> commitMove(sel, curPage, nx, ny, nsx, nsy) },
                         onCommitFree = { fx, fy, fw, fh ->
                             val stored = vm.items.value.firstOrNull { it.id == sel.id }
-                            if (stored != null) {
-                                vm.placeFree(stored.copy(page = pagerState.currentPage, fx = fx, fy = fy, fw = fw, fh = fh))
+                            val ccx = (fx + fw / 2f).toInt().coerceIn(0, cols - 1)
+                            val ccy = (fy + fh / 2f).toInt().coerceIn(0, rows - 1)
+                            if (stored != null && fw <= 1.2f && fh <= 1.2f && tryMerge(stored, curPage, ccx, ccy)) {
+                                // まとめた
+                            } else if (stored != null) {
+                                vm.placeFree(stored.copy(page = curPage, fx = fx, fy = fy, fw = fw, fh = fh))
                             }
                         },
                     )
@@ -473,7 +500,7 @@ fun HomeScreen(
             }
 
             if (settings.pageCount > 1) {
-                PageDots(count = settings.pageCount, current = pagerState.currentPage)
+                PageDots(count = settings.pageCount, current = curPage)
             }
 
             if (settings.showDock) {
@@ -607,8 +634,16 @@ fun HomeScreen(
                             Text(if (selectedItem.dtap.isEmpty()) "ダブルタップ設定" else "ダブルタップ設定(設定済)")
                         }
                     }
+                    if (selectedItem.type == HomeItem.WIDGET || selectedItem.type == HomeItem.STACK) {
+                        TextButton(onClick = { alphaItemId = selectedItem.id }) {
+                            Text(if (selectedItem.alpha < 0f) "透明度" else "透明度(個別)")
+                        }
+                    }
                     if (selectedItem.type == HomeItem.STACK) {
                         TextButton(onClick = { stackManageId = selectedItem.id }) { Text("スタック管理") }
+                    }
+                    if (selectedItem.type == HomeItem.ICONS) {
+                        TextButton(onClick = { iconSetManageId = selectedItem.id }) { Text("セット管理") }
                     }
                     TextButton(onClick = { deleteItem(selectedItem) }) { Text("削除") }
                     TextButton(onClick = {
@@ -624,7 +659,11 @@ fun HomeScreen(
                 apps = apps,
                 yomi = yomi,
                 searchUrl = settings.searchUrl,
+                history = searchHistory.take(settings.searchHistoryCount),
+                onRecord = { vm.addHistory(it) },
+                onClearHistory = { vm.clearHistory() },
                 onLaunch = {
+                    vm.addHistory("app:${it.key}")
                     searchOpen = false
                     launchApp(it)
                 },
@@ -646,6 +685,10 @@ fun HomeScreen(
             add("ここにウィジェットスタックを作成" to {
                 emptyMenu = false
                 report(vm.createStack(at))
+            })
+            add("ここにアイコンセットを作成(ページ切替)" to {
+                emptyMenu = false
+                report(vm.createIconSet(at))
             })
             add("ここにアプリを追加" to {
                 emptyMenu = false
@@ -696,6 +739,16 @@ fun HomeScreen(
                 vm.autoAdjustIcons(cellDp.first, cellDp.second)
                 toast(context, "アイコン・文字・ドックの大きさを自動調整しました")
             })
+            add("整列: アプリアイコンのみ" to {
+                emptyMenu = false
+                vm.arrangeIcons()
+                toast(context, "アプリアイコンを整列しました")
+            })
+            add("整列: ウィジェットのみ" to {
+                emptyMenu = false
+                vm.arrangeWidgets()
+                toast(context, "ウィジェットを整列しました")
+            })
             add("壁紙を変更" to {
                 emptyMenu = false
                 runCatching {
@@ -741,8 +794,13 @@ fun HomeScreen(
     }
 
     dtapItemId?.let { id ->
-        val target = items.firstOrNull { it.id == id }
-        if (target == null) {
+        val isDock = id.startsWith("dock:")
+        val dockEntry = id.removePrefix("dock:")
+        val currentCode = if (isDock) dockDtap[dockEntry].orEmpty() else items.firstOrNull { it.id == id }?.dtap
+        fun setCode(code: String) {
+            if (isDock) vm.setDockDtap(dockEntry, code) else vm.updateItem(id) { it.copy(dtap = code) }
+        }
+        if (currentCode == null) {
             dtapItemId = null
         } else if (dtapApp == null) {
             AppPickerDialog(
@@ -757,22 +815,22 @@ fun HomeScreen(
                 title = "「${app.label}」のどれを開く?",
                 entries = buildList {
                     add("アプリ本体" to {
-                        vm.updateItem(id) { it.copy(dtap = "app:${app.key}") }
+                        setCode("app:${app.key}")
                         dtapItemId = null
                         dtapApp = null
                         toast(context, "ダブルタップで「${app.label}」を開きます")
                     })
                     shortcuts.forEach { (sid, label) ->
                         add(label to {
-                            vm.updateItem(id) { it.copy(dtap = "sc:${app.packageName}|$sid") }
+                            setCode("sc:${app.packageName}|$sid")
                             dtapItemId = null
                             dtapApp = null
                             toast(context, "ダブルタップで「$label」を開きます")
                         })
                     }
-                    if (target.dtap.isNotEmpty()) {
+                    if (currentCode.isNotEmpty()) {
                         add("ダブルタップ設定を解除" to {
-                            vm.updateItem(id) { it.copy(dtap = "") }
+                            setCode("")
                             dtapItemId = null
                             dtapApp = null
                         })
@@ -898,6 +956,84 @@ fun HomeScreen(
         )
     }
 
+    iconSetManageId?.let { sid ->
+        val kids = items.filter { it.parent == sid && it.type == HomeItem.APP }
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { iconSetManageId = null },
+            title = { Text("アイコンセットのアプリ") },
+            confirmButton = { TextButton(onClick = { iconSetManageId = null }) { Text("閉じる") } },
+            text = {
+                Column {
+                    if (kids.isEmpty()) Text("まだアプリがありません。", modifier = Modifier.padding(vertical = 8.dp))
+                    androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                        kids.forEach { k -> item(key = k.id) {
+                            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    appMap[k.appKey]?.label ?: k.pkg,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                )
+                                TextButton(onClick = { vm.moveStackChild(k.id, -1) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text("↑") }
+                                TextButton(onClick = { vm.moveStackChild(k.id, 1) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp)) { Text("↓") }
+                                TextButton(onClick = { vm.removeItem(k.id) }) { Text("外す") }
+                            }
+                        } }
+                    }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = {
+                            iconSetPickId = sid
+                            iconSetManageId = null
+                        },
+                        modifier = Modifier.padding(top = 8.dp),
+                    ) { Text("アプリを追加") }
+                }
+            },
+        )
+    }
+
+    iconSetPickId?.let { sid ->
+        AppPickerDialog(
+            apps = AppSorter.sort(apps, SortMode.NAME, emptyMap()),
+            onPick = {
+                vm.addToIconSet(sid, it.packageName, it.className)
+                iconSetPickId = null
+                iconSetManageId = sid
+            },
+            onDismiss = { iconSetPickId = null },
+        )
+    }
+
+    alphaItemId?.let { aid ->
+        val target = items.firstOrNull { it.id == aid }
+        if (target == null) {
+            alphaItemId = null
+        } else {
+            var useGlobal by remember(aid) { mutableStateOf(target.alpha < 0f) }
+            var v by remember(aid) { mutableFloatStateOf(if (target.alpha < 0f) settings.widgetGlobalAlpha else target.alpha) }
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { alphaItemId = null },
+                title = { Text("このウィジェットだけの透明度") },
+                text = {
+                    Column {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("全体設定に従う", Modifier.weight(1f))
+                            Switch(checked = useGlobal, onCheckedChange = { useGlobal = it })
+                        }
+                        if (!useGlobal) PercentSliderRow("不透明度", v, 0.1f, 1f) { v = it }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        vm.updateItem(aid) { it.copy(alpha = if (useGlobal) -1f else v) }
+                        alphaItemId = null
+                    }) { Text("適用") }
+                },
+                dismissButton = { TextButton(onClick = { alphaItemId = null }) { Text("キャンセル") } },
+            )
+        }
+    }
+
     dockEmptyIndex?.let { idx ->
         MenuDialog(
             title = "ドック",
@@ -947,6 +1083,10 @@ fun HomeScreen(
                     )
                 } else {
                     listOf(
+                        "ダブルタップ設定" + (if (dockDtap[entry].isNullOrEmpty()) "" else "(設定済)") to {
+                            dockMenuIndex = null
+                            dtapItemId = "dock:$entry"
+                        },
                         "ドックから外す" to {
                             dockMenuIndex = null
                             vm.removeDockEntry(entry)
@@ -1027,6 +1167,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                         iconAlpha = iconAlpha,
                         badge = badge,
                         onDoubleClick = dtapAction,
+                        labelLines = s.labelLines,
                     )
                 }
             }
@@ -1040,6 +1181,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 onClick = act { env.onLaunchShortcut(item) },
                 onLongClick = { env.onSelect(item.id) },
                 onDoubleClick = dtapAction,
+                labelLines = s.labelLines,
             )
             HomeItem.FOLDER -> {
                 val folder = env.folders.firstOrNull { it.id == item.ref }
@@ -1055,6 +1197,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                         modifier = Modifier.fillMaxSize(),
                         onClick = act { env.onOpenFolder(folder.id) },
                         onLongClick = { env.onSelect(item.id) },
+                        labelLines = s.labelLines,
                     )
                 }
             }
@@ -1075,6 +1218,19 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 heightDp = h.value.toInt(),
                 locked = editing,
                 onSelect = { env.onSelect(item.id) },
+                alphaOverride = item.alpha,
+            )
+            HomeItem.ICONS -> IconSetBox(
+                set = item,
+                children = env.items.filter { it.parent == item.id && it.type == HomeItem.APP },
+                appMap = env.appMap,
+                settings = s,
+                widthDp = w.value.toInt(),
+                heightDp = h.value.toInt(),
+                locked = editing,
+                badges = env.badges,
+                onLaunch = env.onLaunch,
+                onSelect = { env.onSelect(item.id) },
             )
             HomeItem.SEARCH -> SearchBarTile(
                 bgAlpha = if (item.alpha >= 0f) item.alpha else s.searchBarAlpha,
@@ -1087,6 +1243,7 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 bgAlpha = if (item.alpha >= 0f) item.alpha else s.mediaBarAlpha,
                 buttonSp = s.mediaButtonSp,
                 overlay = s.mediaOverlay,
+                showSource = s.mediaShowSource,
                 onRequestPermission = env.onRequestNotificationAccess,
                 onLongClick = { env.onSelect(item.id) },
             )
@@ -1329,6 +1486,7 @@ private fun DockSlot(
                 onClick = { env.onLaunch(app) },
                 onLongClick = {},
                 iconAlpha = s.dockIconAlpha,
+                onDoubleClick = entry?.let { env.dockDtap[it] }?.takeIf { it.isNotEmpty() && !env.editing }?.let { code -> { env.onDockDtap(code) } },
             )
             else -> Box(
                 Modifier
@@ -1379,10 +1537,15 @@ private fun MediaBar(
     bgAlpha: Float,
     buttonSp: Int,
     overlay: Boolean,
+    showSource: Boolean,
     onRequestPermission: () -> Unit,
     onLongClick: () -> Unit,
 ) {
     val cs = MaterialTheme.colorScheme
+    val sourceText = if (showSource && state.permitted && state.hasSession) {
+        listOfNotNull(state.appName?.takeIf { it.isNotBlank() }, state.output?.takeIf { it.isNotBlank() }).joinToString(" · ")
+    } else ""
+
     val onSurface = cs.onSurface
     val shape = RoundedCornerShape(20.dp)
     val titleText = if (!state.permitted) "曲名を表示するには通知アクセスを許可"
@@ -1430,7 +1593,7 @@ private fun MediaBar(
                 Modifier.align(Alignment.Center).padding(horizontal = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                val halo = TextStyle(shadow = Shadow(cs.surface, blurRadius = 10f))
+                val halo = TextStyle(fontFamily = LocalAppFont.current, shadow = Shadow(cs.surface, blurRadius = 10f))
                 Text(
                     titleText,
                     color = onSurface,
@@ -1445,6 +1608,9 @@ private fun MediaBar(
                     state.artist?.let {
                         Text(it, color = onSurface, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, style = halo)
                     }
+                }
+                if (h >= 72.dp && sourceText.isNotEmpty()) {
+                    Text(sourceText, color = onSurface, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, style = halo)
                 }
             }
             return@BoxWithConstraints
@@ -1488,6 +1654,15 @@ private fun MediaBar(
                                 )
                             }
                         }
+                        if (h >= 64.dp && sourceText.isNotEmpty()) {
+                            Text(
+                                sourceText,
+                                color = cs.onSurfaceVariant,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
@@ -1510,11 +1685,19 @@ private fun SearchOverlay(
     apps: List<AppInfo>,
     yomi: Map<String, String>,
     searchUrl: String,
+    history: List<String>,
+    onRecord: (String) -> Unit,
+    onClearHistory: () -> Unit,
     onLaunch: (AppInfo) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
     var query by remember { mutableStateOf("") }
+    fun web(q: String) {
+        if (q.isBlank()) return
+        onRecord("q:${q.trim()}")
+        openWebSearch(context, searchUrl, q)
+    }
     val focus = remember { FocusRequester() }
     val matches = remember(apps, query, yomi) {
         AppSorter.sort(AppSorter.filter(apps, query, yomi), SortMode.NAME, emptyMap()).take(50)
@@ -1531,7 +1714,7 @@ private fun SearchOverlay(
                     placeholder = { Text("アプリ・Webを検索") },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { openWebSearch(context, searchUrl, query) }),
+                    keyboardActions = KeyboardActions(onSearch = { web(query) }),
                     shape = RoundedCornerShape(28.dp),
                     colors = TextFieldDefaults.colors(
                         focusedIndicatorColor = Color.Transparent,
@@ -1542,6 +1725,35 @@ private fun SearchOverlay(
                 TextButton(onClick = onClose) { Text("閉じる") }
             }
             LazyColumn(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                if (query.isBlank() && history.isNotEmpty()) {
+                    item {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("検索履歴", color = MaterialTheme.colorScheme.outline, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = onClearHistory) { Text("消去") }
+                        }
+                    }
+                    items(history, key = { "h$it" }) { h ->
+                        val app = if (h.startsWith("app:")) apps.firstOrNull { it.key == h.removePrefix("app:") } else null
+                        if (h.startsWith("q:")) {
+                            val word = h.removePrefix("q:")
+                            Row(
+                                Modifier.fillMaxWidth().clickable { web(word) }.padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(Icons.Filled.Search, contentDescription = null, tint = MaterialTheme.colorScheme.outline)
+                                Text(word, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        } else if (app != null) {
+                            Row(
+                                Modifier.fillMaxWidth().clickable { onLaunch(app) }.padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                AppIcon(app, 32)
+                                Text(app.label, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 12.dp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
                 if (query.isNotBlank()) {
                     item {
                         Text(
@@ -1549,7 +1761,7 @@ private fun SearchOverlay(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { openWebSearch(context, searchUrl, query) }
+                                .clickable { web(query) }
                                 .padding(vertical = 12.dp),
                         )
                     }
@@ -1582,9 +1794,9 @@ private fun ItemEditDialog(
     onApply: (HomeItem) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val hasAlpha = item.type != HomeItem.STACK
+    val hasAlpha = item.type != HomeItem.ICONS
     val globalAlpha = when (item.type) {
-        HomeItem.WIDGET -> settings.widgetGlobalAlpha
+        HomeItem.WIDGET, HomeItem.STACK -> settings.widgetGlobalAlpha
         HomeItem.SEARCH -> settings.searchBarAlpha
         HomeItem.MEDIA -> settings.mediaBarAlpha
         else -> settings.iconAlpha

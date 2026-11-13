@@ -19,6 +19,20 @@ data class LauncherSettings(
     val iconShape: String = "original",
     /** 通知の数をアイコンに表示する(通知アクセスの許可が必要) */
     val showBadges: Boolean = true,
+    /** アプリ名の最大行数(1〜2) */
+    val labelLines: Int = 1,
+    /** テーマアイコン(モノクロアイコンをテーマ色で表示。Android 13+): auto=端末の設定に従う / on / off */
+    val themedIcons: String = "auto",
+    /** ホーム画面の最後のページの次は1ページ目に戻る(逆も) */
+    val homeLoop: Boolean = true,
+    /** ホームボタンで表示するメインのページ(0始まり) */
+    val homePage: Int = 0,
+    /** ホーム画面の周りの余白(dp) */
+    val marginDp: Int = 0,
+    /** メディアバーに再生中のアプリと出力先(Bluetooth等)を表示する */
+    val mediaShowSource: Boolean = true,
+    /** 検索バーの履歴の表示件数(0で履歴オフ) */
+    val searchHistoryCount: Int = 5,
     /** 追加したフォントのファイル名(アプリ内保存)。空なら標準 */
     val fontFile: String = "",
     val fontName: String = "",
@@ -75,6 +89,13 @@ data class LauncherSettings(
         put("freeMode", freeMode)
         put("iconShape", iconShape)
         put("showBadges", showBadges)
+        put("labelLines", labelLines)
+        put("themedIcons", themedIcons)
+        put("homeLoop", homeLoop)
+        put("homePage", homePage)
+        put("marginDp", marginDp)
+        put("mediaShowSource", mediaShowSource)
+        put("searchHistoryCount", searchHistoryCount)
         put("fontFile", fontFile)
         put("fontName", fontName)
         put("overlapPolicy", overlapPolicy)
@@ -140,6 +161,13 @@ data class LauncherSettings(
                 freeMode = o.optBoolean("freeMode", d.freeMode),
                 iconShape = oneOf(o.optString("iconShape", d.iconShape), SHAPES, d.iconShape),
                 showBadges = o.optBoolean("showBadges", d.showBadges),
+                labelLines = o.optInt("labelLines", d.labelLines).coerceIn(1, 2),
+                themedIcons = oneOf(o.optString("themedIcons", d.themedIcons), setOf("auto", "on", "off"), d.themedIcons),
+                homeLoop = o.optBoolean("homeLoop", d.homeLoop),
+                homePage = o.optInt("homePage", d.homePage).coerceIn(0, 7),
+                marginDp = o.optInt("marginDp", d.marginDp).coerceIn(0, 48),
+                mediaShowSource = o.optBoolean("mediaShowSource", d.mediaShowSource),
+                searchHistoryCount = o.optInt("searchHistoryCount", d.searchHistoryCount).coerceIn(0, 10),
                 fontFile = o.optString("fontFile", d.fontFile).filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' },
                 fontName = o.optString("fontName", d.fontName).take(60),
                 overlapPolicy = oneOf(o.optString("overlapPolicy", d.overlapPolicy), setOf(OVERLAP, PUSH_DOWN, PUSH_UP, SHIFT), d.overlapPolicy),

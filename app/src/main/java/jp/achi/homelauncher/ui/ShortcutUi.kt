@@ -94,6 +94,7 @@ fun ShortcutCell(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onDoubleClick: (() -> Unit)? = null,
+    labelLines: Int = 1,
 ) {
     val shape = iconShapeOf(LocalIconShape.current)
     val context = LocalContext.current
@@ -118,10 +119,10 @@ fun ShortcutCell(
                 text = item.ref,
                 color = Color.White,
                 fontSize = labelSizeSp.sp,
-                maxLines = 1,
+                maxLines = labelLines,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                style = TextStyle(shadow = Shadow(Color.Black, blurRadius = 6f)),
+                style = TextStyle(fontFamily = LocalAppFont.current, shadow = Shadow(Color.Black, blurRadius = 6f)),
                 modifier = Modifier.padding(top = 2.dp),
             )
         }

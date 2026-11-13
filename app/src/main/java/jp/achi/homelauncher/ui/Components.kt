@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -105,6 +106,31 @@ object IconCache {
         return bmp
     }
 
+    /**
+     * テーマアイコン。モノクロ版アイコン(Android 13+ のアダプティブアイコン)を、テーマ色の背景に前景色で描く。
+     * モノクロ版が無いアプリは通常のアイコンのまま。
+     */
+    fun loadThemed(context: Context, app: AppInfo, bg: Int, fg: Int): ImageBitmap? {
+        val ck = "t:$bg:$fg:${app.key}"
+        cache.get(ck)?.let { return it }
+        val drawable: Drawable = drawableOf(context, app) ?: return null
+        val mono = if (android.os.Build.VERSION.SDK_INT >= 33 && drawable is android.graphics.drawable.AdaptiveIconDrawable) {
+            drawable.monochrome
+        } else null
+        if (mono == null) return loadFlat(context, app)?.also { cache.put(ck, it) }
+        val bmp = runCatching {
+            val s = SIZE_PX
+            val b = android.graphics.Bitmap.createBitmap(s, s, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(b)
+            c.drawColor(bg)
+            val pad = s / 4
+            mono.mutate().apply { setTint(fg); setBounds(-pad, -pad, s + pad, s + pad); draw(c) }
+            b.asImageBitmap()
+        }.getOrNull() ?: return null
+        cache.put(ck, bmp)
+        return bmp
+    }
+
     fun load(context: Context, app: AppInfo): ImageBitmap? {
         cache.get(app.key)?.let { return it }
         val drawable: Drawable = drawableOf(context, app) ?: return null
@@ -117,12 +143,22 @@ object IconCache {
 @Composable
 fun AppIcon(app: AppInfo, sizeDp: Int, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val shape = iconShapeOf(LocalIconShape.current)
-    val cacheKey = if (shape != null) "f:" + app.key else app.key
+    val tint = LocalIconTint.current
+    // テーマアイコンは全面に描くので、形が「そのまま」のときは角丸四角で切り抜く
+    val shape = iconShapeOf(LocalIconShape.current) ?: if (tint != null) RoundedCornerShape(percent = 28) else null
+    val cacheKey = when {
+        tint != null -> "t:${tint.first}:${tint.second}:${app.key}"
+        shape != null -> "f:" + app.key
+        else -> app.key
+    }
     val bitmap by produceState(initialValue = IconCache.get(cacheKey), cacheKey) {
         if (value == null) {
             value = withContext(Dispatchers.Default) {
-                if (shape != null) IconCache.loadFlat(context, app) else IconCache.load(context, app)
+                when {
+                    tint != null -> IconCache.loadThemed(context, app, tint.first, tint.second)
+                    shape != null -> IconCache.loadFlat(context, app)
+                    else -> IconCache.load(context, app)
+                }
             }
         }
     }
@@ -154,6 +190,7 @@ fun AppCell(
     labelColor: Color? = null,
     badge: Int = 0,
     onDoubleClick: (() -> Unit)? = null,
+    labelLines: Int = 1,
 ) {
     Column(
         modifier = modifier
@@ -173,10 +210,11 @@ fun AppCell(
                 text = app.label,
                 color = color,
                 fontSize = labelSizeSp.sp,
-                maxLines = 1,
+                maxLines = labelLines,
+                lineHeight = (labelSizeSp + 2).sp,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                style = TextStyle(shadow = shadow),
+                style = TextStyle(fontFamily = LocalAppFont.current, shadow = shadow),
                 modifier = Modifier.padding(top = 2.dp),
             )
         }

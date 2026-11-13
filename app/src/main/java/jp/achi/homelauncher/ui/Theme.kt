@@ -14,12 +14,49 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.material3.Typography
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import jp.achi.homelauncher.data.LauncherSettings
 import java.io.File
+
+/** 設定で追加したフォント。明示的な TextStyle を使う文字(アプリ名など)にも反映するため、別に持ち回る。 */
+val LocalAppFont = androidx.compose.runtime.staticCompositionLocalOf<FontFamily?> { null }
+
+/** テーマアイコン用の (背景色, 前景色)。null なら使わない。 */
+val LocalIconTint = androidx.compose.runtime.staticCompositionLocalOf<Pair<Int, Int>?> { null }
+
+/** ホーム画面・一覧に共通の Composition 値(アイコンの形・テーマアイコン・フォント)を供給する。 */
+@Composable
+private fun HomeLocals(settings: LauncherSettings, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val cs = MaterialTheme.colorScheme
+    val font = rememberCustomFont(settings)
+    val systemOn = runCatching {
+        android.provider.Settings.Secure.getInt(context.contentResolver, "themed_icon_enabled", 0) == 1
+    }.getOrDefault(false)
+    val on = when (settings.themedIcons) {
+        "on" -> true
+        "off" -> false
+        else -> systemOn
+    }
+    val tint = if (on && android.os.Build.VERSION.SDK_INT >= 33) {
+        cs.primaryContainer.toArgb() to cs.onPrimaryContainer.toArgb()
+    } else null
+    CompositionLocalProvider(
+        LocalIconShape provides settings.iconShape,
+        LocalIconTint provides tint,
+        LocalAppFont provides font,
+    ) {
+        // Surface の外(ホーム画面)でも、すべての Text に選んだフォントが効くようにする
+        androidx.compose.material3.ProvideTextStyle(
+            androidx.compose.ui.text.TextStyle(fontFamily = font),
+            content,
+        )
+    }
+}
 
 /** 設定で追加したフォント(アプリ内に保存したファイル)。無い・壊れている場合は null(標準)。 */
 @Composable
@@ -70,7 +107,14 @@ fun HomeLauncherTheme(settings: LauncherSettings, content: @Composable () -> Uni
         else -> lightColorScheme()
     }
     val font = rememberCustomFont(settings)
-    MaterialTheme(colorScheme = scheme, typography = Typography().withFont(font), content = content)
+    CompositionLocalProvider(LocalAppFont provides font) {
+        MaterialTheme(colorScheme = scheme, typography = Typography().withFont(font)) {
+            androidx.compose.material3.ProvideTextStyle(
+                androidx.compose.ui.text.TextStyle(fontFamily = font),
+                content,
+            )
+        }
+    }
 }
 
 /**
@@ -80,7 +124,7 @@ fun HomeLauncherTheme(settings: LauncherSettings, content: @Composable () -> Uni
 @Composable
 fun HomeColorTheme(settings: LauncherSettings, content: @Composable () -> Unit) {
     if (settings.homeColorMode != "custom") {
-        CompositionLocalProvider(LocalIconShape provides settings.iconShape) { content() }
+        HomeLocals(settings, content)
         return
     }
     val dark = when (settings.homeDarkTheme) {
@@ -93,7 +137,7 @@ fun HomeColorTheme(settings: LauncherSettings, content: @Composable () -> Unit) 
         colorScheme = customColorScheme(Color(settings.homeColor), dark),
         typography = Typography().withFont(font),
     ) {
-        CompositionLocalProvider(LocalIconShape provides settings.iconShape) { content() }
+        HomeLocals(settings, content)
     }
 }
 

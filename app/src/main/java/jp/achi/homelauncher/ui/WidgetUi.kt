@@ -148,7 +148,7 @@ fun Modifier.blockDrawerSwipe(): Modifier = pointerInput(Unit) {
  * スタック内のウィジェットを左右スワイプで切り替える。
  * 初期パスで横方向のドラッグを奪うので、クリックを処理するウィジェットの上でもスワイプできる。
  */
-private fun Modifier.stackSwipe(state: PagerState, scope: CoroutineScope): Modifier = pointerInput(state) {
+private fun Modifier.stackSwipe(state: PagerState, scope: CoroutineScope, loop: Boolean = false): Modifier = pointerInput(state, loop) {
     awaitEachGesture {
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         val startPage = state.currentPage
@@ -180,6 +180,11 @@ private fun Modifier.stackSwipe(state: PagerState, scope: CoroutineScope): Modif
             val last = (state.pageCount - 1).coerceAtLeast(0)
             // 最後まで行ったら最初に戻る(最初から戻ると最後へ)
             val target = when {
+                loop -> when {
+                    totalX < -threshold -> startPage + 1
+                    totalX > threshold -> startPage - 1
+                    else -> startPage
+                }
                 totalX < -threshold -> if (startPage >= last) 0 else startPage + 1
                 totalX > threshold -> if (startPage <= 0) last else startPage - 1
                 else -> startPage
@@ -265,6 +270,7 @@ fun StackBox(
     heightDp: Int,
     locked: Boolean,
     onSelect: () -> Unit,
+    alphaOverride: Float = -1f,
 ) {
     val pagerState = rememberPagerState(pageCount = { children.size.coerceAtLeast(1) })
     val scope = rememberCoroutineScope()
@@ -304,7 +310,7 @@ fun StackBox(
                     WidgetBox(
                         item = child,
                         widgets = widgets,
-                        alphaValue = if (child.alpha >= 0f) child.alpha else settings.widgetGlobalAlpha,
+                        alphaValue = if (alphaOverride >= 0f) alphaOverride else if (child.alpha >= 0f) child.alpha else settings.widgetGlobalAlpha,
                         widthDp = widthDp,
                         heightDp = heightDp,
                         locked = locked,
@@ -324,6 +330,116 @@ fun StackBox(
                                 .size(if (i == pagerState.currentPage) 7.dp else 5.dp)
                                 .clip(CircleShape)
                                 .background(Color.White.copy(alpha = if (i == pagerState.currentPage) 0.95f else 0.5f)),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * アイコンセット: 枠のマス数(縦×横)ぶんのアプリを1ページとして並べ、スワイプでページを切り替える。
+ * 最後のページから進むと最初に戻る。ウィジェットスタックのアイコン版。
+ */
+@Composable
+fun IconSetBox(
+    set: HomeItem,
+    children: List<HomeItem>,
+    appMap: Map<String, jp.achi.homelauncher.data.AppInfo>,
+    settings: LauncherSettings,
+    widthDp: Int,
+    heightDp: Int,
+    locked: Boolean,
+    badges: Map<String, List<jp.achi.homelauncher.media.BadgeStore.Notif>>,
+    onLaunch: (jp.achi.homelauncher.data.AppInfo) -> Unit,
+    onSelect: () -> Unit,
+) {
+    val cols = set.spanX.coerceAtLeast(1)
+    val rows = set.spanY.coerceAtLeast(1)
+    val cap = cols * rows
+    val apps = children.mapNotNull { appMap[it.appKey] }
+    val chunks = apps.chunked(cap)
+    val count = chunks.size.coerceAtLeast(1)
+    val loop = count > 1
+    val virtual = if (loop) count * 1000 else 1
+    val pagerState = rememberPagerState(initialPage = if (loop) count * 500 else 0, pageCount = { virtual })
+    val scope = rememberCoroutineScope()
+    val currentSelect by rememberUpdatedState(onSelect)
+    val cellW = widthDp.toFloat() / cols
+    val cellH = heightDp.toFloat() / rows
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .blockDrawerSwipe()
+            .stackSwipe(pagerState, scope, loop = true),
+    ) {
+        if (apps.isEmpty()) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .padding(4.dp)
+                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f))
+                    .clickable { currentSelect() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "アイコンセット\n長押し →「セット管理」で追加",
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(8.dp),
+                )
+            }
+        } else {
+            HorizontalPager(
+                state = pagerState,
+                userScrollEnabled = false,
+                modifier = Modifier.fillMaxSize(),
+            ) { vp ->
+                val page = chunks.getOrNull(vp % count).orEmpty()
+                Column(Modifier.fillMaxSize()) {
+                    for (r in 0 until rows) {
+                        Row(Modifier.weight(1f).fillMaxWidth()) {
+                            for (c in 0 until cols) {
+                                val app = page.getOrNull(r * cols + c)
+                                Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    if (app != null) {
+                                        val badge = if (settings.showBadges) badges[app.packageName]?.size ?: 0 else 0
+                                        jp.achi.homelauncher.ui.AppCell(
+                                            app = app,
+                                            iconSizeDp = minOf(settings.iconSizeDp, (cellW - 8f).toInt()).coerceAtLeast(24),
+                                            showLabel = settings.showLabels,
+                                            labelSizeSp = settings.labelSizeSp,
+                                            onWallpaper = true,
+                                            modifier = Modifier.fillMaxSize(),
+                                            onClick = { if (locked) currentSelect() else onLaunch(app) },
+                                            onLongClick = { currentSelect() },
+                                            iconAlpha = settings.iconAlpha,
+                                            badge = badge,
+                                            labelLines = settings.labelLines,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (count > 1) {
+                val cur = pagerState.currentPage % count
+                Row(
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    repeat(count) { i ->
+                        Box(
+                            Modifier
+                                .padding(2.dp)
+                                .size(if (i == cur) 7.dp else 5.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = if (i == cur) 0.95f else 0.5f)),
                         )
                     }
                 }

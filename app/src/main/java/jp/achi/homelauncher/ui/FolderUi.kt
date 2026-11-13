@@ -63,6 +63,7 @@ fun FolderTile(
     iconAlpha: Float,
     onWallpaper: Boolean,
     modifier: Modifier = Modifier,
+    labelLines: Int = 1,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -102,10 +103,10 @@ fun FolderTile(
                 text = folder.name,
                 color = if (onWallpaper) Color.White else MaterialTheme.colorScheme.onSurface,
                 fontSize = labelSizeSp.sp,
-                maxLines = 1,
+                maxLines = labelLines,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                style = TextStyle(shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null),
+                style = TextStyle(fontFamily = LocalAppFont.current, shadow = if (onWallpaper) Shadow(Color.Black, blurRadius = 6f) else null),
                 modifier = Modifier.padding(top = 2.dp),
             )
         }

@@ -20,6 +20,10 @@ class MediaHelper(context: Context) {
         val title: String? = null,
         val artist: String? = null,
         val playing: Boolean = false,
+        /** 再生中のアプリ名 */
+        val appName: String? = null,
+        /** 出力先(スピーカー / Bluetooth: 名前 / イヤホン 等) */
+        val output: String? = null,
     )
 
     private val appContext = context.applicationContext
@@ -32,6 +36,40 @@ class MediaHelper(context: Context) {
 
     private var controller: MediaController? = null
     private var listening = false
+
+    private val deviceCallback = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>?) = publish()
+        override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>?) = publish()
+    }
+    private var deviceCallbackRegistered = false
+
+    /** 現在の出力先。Bluetooth・有線イヤホン・USB が接続されていればそれを、なければスピーカー。 */
+    private fun outputLabel(): String? = runCatching {
+        val devices = audio?.getDevices(AudioManager.GET_DEVICES_OUTPUTS).orEmpty()
+        val bt = devices.firstOrNull {
+            it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == android.media.AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                it.type == android.media.AudioDeviceInfo.TYPE_BLE_SPEAKER ||
+                it.type == android.media.AudioDeviceInfo.TYPE_HEARING_AID
+        }
+        val wired = devices.firstOrNull {
+            it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+        }
+        when {
+            bt != null -> "Bluetooth" + (bt.productName?.toString()?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: "")
+            wired != null -> "イヤホン"
+            else -> "スピーカー"
+        }
+    }.getOrNull()
+
+    private fun appLabel(pkg: String?): String? = pkg?.let {
+        runCatching {
+            val pm = appContext.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(it, 0)).toString()
+        }.getOrNull()
+    }
 
     private val controllerCallback = object : MediaController.Callback() {
         override fun onPlaybackStateChanged(state: PlaybackState?) = publish()
@@ -52,6 +90,10 @@ class MediaHelper(context: Context) {
             return
         }
         runCatching {
+            if (!deviceCallbackRegistered) {
+                audio?.registerAudioDeviceCallback(deviceCallback, null)
+                deviceCallbackRegistered = true
+            }
             mgr.addOnActiveSessionsChangedListener(sessionsListener, component)
             listening = true
             attach(mgr.getActiveSessions(component))
@@ -65,6 +107,10 @@ class MediaHelper(context: Context) {
         if (listening) {
             runCatching { manager?.removeOnActiveSessionsChangedListener(sessionsListener) }
             listening = false
+        }
+        if (deviceCallbackRegistered) {
+            runCatching { audio?.unregisterAudioDeviceCallback(deviceCallback) }
+            deviceCallbackRegistered = false
         }
         runCatching { controller?.unregisterCallback(controllerCallback) }
         controller = null
@@ -81,7 +127,7 @@ class MediaHelper(context: Context) {
     private fun publish() {
         val c = controller
         if (c == null) {
-            _state.value = State(permitted = isPermitted())
+            _state.value = State(permitted = isPermitted(), output = outputLabel())
             return
         }
         val meta = runCatching { c.metadata }.getOrNull()
@@ -91,6 +137,8 @@ class MediaHelper(context: Context) {
             title = meta?.getString(android.media.MediaMetadata.METADATA_KEY_TITLE),
             artist = meta?.getString(android.media.MediaMetadata.METADATA_KEY_ARTIST),
             playing = c.playbackState?.state == PlaybackState.STATE_PLAYING,
+            appName = appLabel(c.packageName),
+            output = outputLabel(),
         )
     }
 

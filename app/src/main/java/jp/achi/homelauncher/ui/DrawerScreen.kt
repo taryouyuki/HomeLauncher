@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import jp.achi.homelauncher.LauncherViewModel
+import jp.achi.homelauncher.data.AppCategory
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppSorter
 import jp.achi.homelauncher.data.PlaceResult
@@ -74,6 +76,9 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val lastLaunch by vm.lastLaunch.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val yomi by vm.yomi.collectAsStateWithLifecycle()
+    val categories by vm.categories.collectAsStateWithLifecycle()
+    var catApp by remember { mutableStateOf<AppInfo?>(null) }
+    var catCustomApp by remember { mutableStateOf<AppInfo?>(null) }
     var yomiApp by remember { mutableStateOf<AppInfo?>(null) }
 
     var query by remember { mutableStateOf("") }
@@ -82,9 +87,10 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
     val dateFmt = remember { SimpleDateFormat("yy/MM/dd", Locale.JAPAN) }
     val dateTimeFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.JAPAN) }
 
-    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch, yomi) {
-        AppSorter.sort(AppSorter.filter(apps, query, yomi), settings.drawerSort, counts, lastLaunch)
+    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch, yomi, categories) {
+        AppSorter.sort(AppSorter.filter(apps, query, yomi), settings.drawerSort, counts, lastLaunch, categories)
     }
+    val byCategory = settings.drawerSort == SortMode.CATEGORY
 
     val custom = settings.drawerBgMode == "custom"
     val baseColor = if (custom) Color(settings.drawerBgColor) else MaterialTheme.colorScheme.surface
@@ -154,6 +160,7 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 SortChip("ダウンロード順", settings.drawerSort == SortMode.INSTALL) { vm.setDrawerSort(SortMode.INSTALL) }
                 SortChip("よく使う順", settings.drawerSort == SortMode.FREQUENT) { vm.setDrawerSort(SortMode.FREQUENT) }
                 SortChip("更新順", settings.drawerSort == SortMode.UPDATED) { vm.setDrawerSort(SortMode.UPDATED) }
+                SortChip("カテゴリー順", byCategory) { vm.setDrawerSort(SortMode.CATEGORY) }
                 // 仕事用プロファイル(Island など)のアプリだけを表示する
                 FilterChip(
                     selected = showWork,
@@ -166,7 +173,7 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 columns = GridCells.Fixed(settings.drawerCols),
                 modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
             ) {
-                items(list, key = { it.key }) { app ->
+                val cell: @Composable (AppInfo) -> Unit = { app ->
                     AppCell(
                         app = app,
                         iconSizeDp = settings.drawerIconSizeDp,
@@ -174,12 +181,14 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                         labelSizeSp = settings.labelSizeSp,
                         onWallpaper = false,
                         labelColor = labelColor,
+                        labelLines = settings.labelLines,
                         subLabel = when (settings.drawerSort) {
                             SortMode.NAME -> null
                             SortMode.LAST_LAUNCH -> lastLaunch[app.key]?.let { dateTimeFmt.format(Date(it)) } ?: "未起動"
                             SortMode.INSTALL -> dateFmt.format(Date(app.installedAt))
                             SortMode.FREQUENT -> "${counts[app.key] ?: 0}回"
                             SortMode.UPDATED -> if (app.work) null else dateFmt.format(Date(app.updatedAt))
+                            SortMode.CATEGORY -> null
                         },
                         modifier = Modifier.padding(vertical = 8.dp),
                         onClick = {
@@ -191,6 +200,22 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                             if (app.work) toast(context, "仕事用アプリはここから起動できます") else menuApp = app
                         },
                     )
+                }
+                if (byCategory) {
+                    val groups = list.groupBy { AppCategory.of(it, categories) }
+                    groups.forEach { (name, group) ->
+                        item(key = "cat:$name", span = { GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                "$name(${group.size})",
+                                color = labelColor ?: MaterialTheme.colorScheme.primary,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+                                modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 2.dp),
+                            )
+                        }
+                        items(group, key = { it.key }) { app -> cell(app) }
+                    }
+                } else {
+                    items(list, key = { it.key }) { app -> cell(app) }
                 }
             }
         }
@@ -205,6 +230,43 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 toast(context, "「${folder.name}」に追加しました")
             },
             onDismiss = { folderPickApp = null },
+        )
+    }
+
+    catApp?.let { app ->
+        MenuDialog(
+            title = "「${app.label}」のカテゴリー",
+            entries = buildList {
+                AppCategory.ORDER.forEach { name ->
+                    add(name to {
+                        vm.setCategory(app.key, name)
+                        catApp = null
+                    })
+                }
+                add("自分で名前を付ける" to {
+                    catApp = null
+                    catCustomApp = app
+                })
+                if (categories.containsKey(app.key)) {
+                    add("自動に戻す" to {
+                        vm.setCategory(app.key, "")
+                        catApp = null
+                    })
+                }
+            },
+            onDismiss = { catApp = null },
+        )
+    }
+
+    catCustomApp?.let { app ->
+        TextInputDialog(
+            title = "「${app.label}」のカテゴリー名",
+            initial = categories[app.key].orEmpty(),
+            onConfirm = {
+                catCustomApp = null
+                vm.setCategory(app.key, it)
+            },
+            onDismiss = { catCustomApp = null },
         )
     }
 
@@ -241,6 +303,10 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                 "フォルダに追加" to {
                     menuApp = null
                     folderPickApp = app
+                },
+                "カテゴリーを変更(現在: ${AppCategory.of(app, categories)})" to {
+                    menuApp = null
+                    catApp = app
                 },
                 "読み仮名を設定(検索用)" to {
                     menuApp = null

@@ -3,9 +3,14 @@
 
     <!-- アプリ一覧の長押しメニューからアンインストール画面を開くために必要 -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- ホームアプリとして、システム・他アプリのウィジェット(バッテリー等)をすべて一覧に出すため -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
     <!-- ランチャーが起動可能なアプリを列挙するために必要 -->
     <queries>
+        <intent>
+            <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+        </intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
