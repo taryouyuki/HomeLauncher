@@ -53,6 +53,17 @@ object BadgeStore {
         _notifs.value = emptyMap()
     }
 
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var pendingRun: Runnable? = null
+
+    /** 短時間に何度も呼ばれたら 400ms 後に1回だけ update する。 */
+    fun requestUpdate(svc: NotificationListenerService) {
+        pendingRun?.let { handler.removeCallbacks(it) }
+        val r = Runnable { update(svc) }
+        pendingRun = r
+        handler.postDelayed(r, 400)
+    }
+
     fun update(svc: NotificationListenerService) {
         val active = runCatching { svc.activeNotifications }.getOrNull() ?: return
         val fresh = active

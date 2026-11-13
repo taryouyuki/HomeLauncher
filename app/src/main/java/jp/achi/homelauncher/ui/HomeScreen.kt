@@ -166,7 +166,6 @@ fun HomeScreen(
     val dockDtap by vm.dockDtap.collectAsStateWithLifecycle()
     val searchHistory by vm.searchHistory.collectAsStateWithLifecycle()
     val adjustSnap by vm.adjust.collectAsStateWithLifecycle()
-    val quickHistory by BadgeStore.history.collectAsStateWithLifecycle()
     var quickOpen by remember { mutableStateOf(false) }
 
     var selectedId by remember { mutableStateOf<String?>(null) }
@@ -337,16 +336,35 @@ fun HomeScreen(
             .forEach { widgets.delete(it.widgetId) }
     }
 
-    /** アプリを、重なった先のアプリ/フォルダ/アイコンセットにまとめる。まとめたら true。 */
-    fun tryMerge(sel: HomeItem, page: Int, cx: Int, cy: Int): Boolean {
+    /**
+     * アプリ/ショートカットを、重なった先のアイコン・フォルダ・アイコンセットにまとめる。まとめたら true。
+     * (rx, ry, rw, rh) はドロップした枠の位置とサイズ(マス単位の小数)。最も大きく重なった相手を選ぶので、
+     * 自由配置モードでも、マスに揃える場合でも同じように判定できる。
+     */
+    fun tryMerge(sel: HomeItem, page: Int, rx: Float, ry: Float, rw: Float, rh: Float): Boolean {
         if (!vm.settings.value.mergeOnDrop) return false
         if (sel.type != HomeItem.APP && sel.type != HomeItem.SHORTCUT) return false
-        val target = vm.items.value.firstOrNull { t ->
-            t.id != sel.id && t.parent.isEmpty() && t.page == page &&
-                (t.type == HomeItem.APP || t.type == HomeItem.SHORTCUT || t.type == HomeItem.FOLDER ||
-                    (t.type == HomeItem.ICONS && sel.type == HomeItem.APP)) &&
-                GridLogic.overlaps(t, cx, cy, 1, 1)
-        } ?: return false
+        var best: HomeItem? = null
+        var bestRatio = 0f
+        for (t in vm.items.value) {
+            if (t.id == sel.id || t.parent.isNotEmpty() || t.page != page) continue
+            val ok = t.type == HomeItem.APP || t.type == HomeItem.SHORTCUT || t.type == HomeItem.FOLDER ||
+                (t.type == HomeItem.ICONS && sel.type == HomeItem.APP)
+            if (!ok) continue
+            val tx = if (t.free) t.fx else t.x.toFloat()
+            val ty = if (t.free) t.fy else t.y.toFloat()
+            val tw = if (t.free) t.fw else t.spanX.toFloat()
+            val th = if (t.free) t.fh else t.spanY.toFloat()
+            val ix = (minOf(rx + rw, tx + tw) - maxOf(rx, tx)).coerceAtLeast(0f)
+            val iy = (minOf(ry + rh, ty + th) - maxOf(ry, ty)).coerceAtLeast(0f)
+            val area = ix * iy
+            val ratio = area / minOf(rw * rh, tw * th).coerceAtLeast(0.01f)
+            if (ratio > bestRatio) {
+                bestRatio = ratio
+                best = t
+            }
+        }
+        val target = best?.takeIf { bestRatio >= 0.35f } ?: return false
         val ok = if (target.type == HomeItem.ICONS) vm.moveHomeAppToIconSet(sel.id, target.id)
         else vm.mergeIntoFolder(sel.id, target.id)
         if (ok) {
@@ -358,7 +376,7 @@ fun HomeScreen(
 
     /** ドラッグ移動・リサイズの確定。アイコンを別のアイコン/フォルダ/アイコンセットに重ねた場合はまとめる。 */
     fun commitMove(sel: HomeItem, page: Int, nx: Int, ny: Int, nsx: Int, nsy: Int) {
-        if (nsx == 1 && nsy == 1 && tryMerge(sel, page, nx, ny)) return
+        if (nsx == 1 && nsy == 1 && tryMerge(sel, page, nx.toFloat(), ny.toFloat(), 1f, 1f)) return
         val stored = vm.items.value.firstOrNull { it.id == sel.id } ?: return
         val collided = vm.placeAndResolve(stored.copy(page = page, x = nx, y = ny, spanX = nsx, spanY = nsy, free = false))
         if (collided) toast(context, vm.overlapMessage())
@@ -501,9 +519,7 @@ fun HomeScreen(
                         onCommit = { nx, ny, nsx, nsy -> commitMove(sel, curPage, nx, ny, nsx, nsy) },
                         onCommitFree = { fx, fy, fw, fh ->
                             val stored = vm.items.value.firstOrNull { it.id == sel.id }
-                            val ccx = (fx + fw / 2f).toInt().coerceIn(0, cols - 1)
-                            val ccy = (fy + fh / 2f).toInt().coerceIn(0, rows - 1)
-                            if (stored != null && fw <= 1.2f && fh <= 1.2f && tryMerge(stored, curPage, ccx, ccy)) {
+                            if (stored != null && tryMerge(stored, curPage, fx, fy, fw, fh)) {
                                 // まとめた
                             } else if (stored != null) {
                                 vm.placeFree(stored.copy(page = curPage, fx = fx, fy = fy, fw = fw, fh = fh))
@@ -519,7 +535,10 @@ fun HomeScreen(
 
             if (settings.showDock) {
                 val perPage = settings.dockCount
-                val dockPages = (dock.size + perPage) / perPage // ceil((size + 1) / perPage)
+                val autoPages = (dock.size + perPage) / perPage // ceil((size + 1) / perPage)
+                val neededPages = ((dock.size + perPage - 1) / perPage).coerceAtLeast(1)
+                // 設定でページ数を指定したときは、その数に固定(入りきらない分だけ自動で増える)
+                val dockPages = if (settings.dockPages > 0) maxOf(settings.dockPages, neededPages) else autoPages
                 val loop = settings.dockLoop && dockPages > 1
                 val virtualCount = if (loop) dockPages * 1000 else dockPages
                 key(dockPages, loop) {
@@ -716,7 +735,6 @@ fun HomeScreen(
             QuickPanel(
                 apps = apps,
                 quickApps = settings.quickApps,
-                notifs = quickHistory,
                 mediaState = mediaState,
                 media = media,
                 onLaunch = {
@@ -1012,6 +1030,8 @@ fun HomeScreen(
                 iconSizeDp = settings.drawerIconSizeDp,
                 labelSizeSp = settings.labelSizeSp,
                 cols = settings.folderCols,
+                bgColor = if (settings.folderBgMode == "custom") Color(settings.folderBgColor) else null,
+                bgAlpha = settings.folderBgAlpha,
                 labelLines = settings.labelLines.coerceAtLeast(1),
                 onLaunch = {
                     openFolderId = null

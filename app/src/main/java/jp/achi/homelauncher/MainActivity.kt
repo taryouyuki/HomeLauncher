@@ -160,7 +160,7 @@ private fun LauncherRoot(
             exit = slideOutVertically { it } + fadeOut(),
         ) {
             HomeColorTheme(settings) {
-                DrawerScreen(vm = vm, onClose = { showDrawer = false })
+                DrawerScreen(vm = vm, onClose = { showDrawer = false }, onOpenSettings = { showSettings = true })
             }
         }
         AnimatedVisibility(

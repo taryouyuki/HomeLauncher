@@ -64,7 +64,7 @@ import java.util.Locale
 
 /** 下から上スワイプで開くアプリ一覧。5種類の並び替えと部分一致検索に対応。 */
 @Composable
-fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
+fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () -> Unit = {}) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -228,6 +228,13 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit) {
                     }
                 } else {
                     items(list, key = { it.key }) { app -> cell(app) }
+                }
+                // ホーム画面が埋まって長押しメニューが出せなくても、ここから設定を開ける
+                item(key = "open-settings", span = { GridItemSpan(maxLineSpan) }) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp, horizontal = 16.dp),
+                    ) { Text("ランチャーの設定を開く") }
                 }
             }
         }

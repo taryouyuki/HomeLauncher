@@ -358,6 +358,14 @@ fun SettingsScreen(
                             )
                             Section("フォルダ")
                             IntSliderRow("フォルダ内の1行のアプリ数", s.folderCols, 3, 5) { v -> update { it.copy(folderCols = v) } }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+                                FilterChip(s.folderBgMode == "auto", { update { it.copy(folderBgMode = "auto") } }, { Text("フォルダ背景: テーマの色") })
+                                FilterChip(s.folderBgMode == "custom", { update { it.copy(folderBgMode = "custom") } }, { Text("好きな色") })
+                            }
+                            if (s.folderBgMode == "custom") {
+                                ColorPickerRow("フォルダの背景色", s.folderBgColor) { c -> update { it.copy(folderBgColor = c) } }
+                            }
+                            PercentSliderRow("フォルダ背景の不透明度", s.folderBgAlpha, 0.2f, 1f) { v -> update { it.copy(folderBgAlpha = v) } }
                             Section("クイックパネル(上から下へスワイプ)")
                             SwitchRow("ホームで上から下へスワイプしてクイックパネルを開く", s.quickPanel) { v -> update { it.copy(quickPanel = v) } }
                             Text(
@@ -389,6 +397,12 @@ fun SettingsScreen(
                             SwitchRow("ドックを表示", s.showDock) { v -> update { it.copy(showDock = v) } }
                             IntSliderRow("縦幅", s.dockHeightDp, 48, 240, "dp") { v -> update { it.copy(dockHeightDp = v) } }
                             IntSliderRow("1ページのアイコン数", s.dockCount, 3, 7) { v -> update { it.copy(dockCount = v) } }
+                            IntSliderRow("ドックのページ数(0=自動)", s.dockPages, 0, 10) { v -> update { it.copy(dockPages = v) } }
+                            Text(
+                                "0にすると、いっぱいになるたびに新しいページが増えます。数を指定すると、そのページ数で固定されます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
                             IntSliderRow("アイコンサイズ(ドック専用)", s.dockIconSizeDp, 24, 200, "dp") { v -> update { it.copy(dockIconSizeDp = v) } }
                             Text(
                                 "ドックのアイコンは、長押ししたまま左右に動かして並び替えできます(間のアイコンは1つずつずれます)。",

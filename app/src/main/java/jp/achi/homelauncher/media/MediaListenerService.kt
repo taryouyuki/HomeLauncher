@@ -19,7 +19,8 @@ class MediaListenerService : NotificationListenerService() {
         BadgeStore.clear()
     }
 
-    override fun onNotificationPosted(sbn: StatusBarNotification?) = BadgeStore.update(this)
+    // 通知が連続して来ても、まとめて1回だけ集計する(電池・CPUの節約)
+    override fun onNotificationPosted(sbn: StatusBarNotification?) = BadgeStore.requestUpdate(this)
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) = BadgeStore.update(this)
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) = BadgeStore.requestUpdate(this)
 }

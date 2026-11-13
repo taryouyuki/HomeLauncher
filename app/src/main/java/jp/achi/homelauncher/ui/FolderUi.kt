@@ -129,6 +129,8 @@ fun FolderDialog(
     labelSizeSp: Int,
     labelLines: Int = 2,
     cols: Int = 4,
+    bgColor: Color? = null,
+    bgAlpha: Float = 0.9f,
     onLaunch: (AppInfo) -> Unit,
     onPutOnHome: (AppInfo) -> Unit,
     onRemoveFromFolder: (AppInfo) -> Unit,
@@ -145,8 +147,9 @@ fun FolderDialog(
     val entries = folder.apps.filter { it.startsWith("sc:") || appMap[it] != null }
     var menuSc by remember { mutableStateOf<String?>(null) }
     val cs = MaterialTheme.colorScheme
-    val panel = androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.68f).copy(alpha = 0.9f)
-    val pill = androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.78f).copy(alpha = 0.95f)
+    val baseBg = bgColor ?: androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.68f)
+    val panel = baseBg.copy(alpha = bgAlpha)
+    val pill = androidx.compose.ui.graphics.lerp(baseBg, Color.Black, 0.35f).copy(alpha = (bgAlpha + 0.05f).coerceAtMost(1f))
     var menuOpen by remember { mutableStateOf(false) }
 
     Dialog(

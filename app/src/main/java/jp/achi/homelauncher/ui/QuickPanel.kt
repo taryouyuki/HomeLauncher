@@ -22,6 +22,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,7 +51,6 @@ val QUICK_DEFAULTS = listOf("com.twitter.android", "com.discord", "com.spotify.m
 fun QuickPanel(
     apps: List<AppInfo>,
     quickApps: String,
-    notifs: Map<String, List<BadgeStore.Notif>>,
     mediaState: MediaHelper.State,
     media: MediaHelper,
     onLaunch: (AppInfo) -> Unit,
@@ -63,6 +63,8 @@ fun QuickPanel(
     }
     val shown = pkgs.mapNotNull { p -> apps.firstOrNull { it.packageName == p } }
     var picking by remember { mutableStateOf(false) }
+    val notifs by BadgeStore.history.collectAsState()
+    var editing by remember { mutableStateOf(false) }
     val cs = MaterialTheme.colorScheme
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -84,6 +86,7 @@ fun QuickPanel(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("クイックパネル", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(vertical = 12.dp))
+                TextButton(onClick = { editing = !editing }) { Text(if (editing) "完了" else "編集") }
                 TextButton(onClick = { BadgeStore.clearHistory() }) { Text("全クリア") }
                 TextButton(onClick = onClose) { Text("閉じる") }
             }
@@ -128,12 +131,12 @@ fun QuickPanel(
                             AppIcon(app, 32)
                             Text(app.label, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(start = 10.dp))
                             val idx = pkgs.indexOf(app.packageName)
-                            TextButton(
+                            if (editing) TextButton(
                                 enabled = idx > 0,
                                 onClick = { onChange(pkgs.toMutableList().also { java.util.Collections.swap(it, idx, idx - 1) }.joinToString(",")) },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
                             ) { Text("↑") }
-                            TextButton(
+                            if (editing) TextButton(
                                 enabled = idx in 0 until pkgs.size - 1,
                                 onClick = { onChange(pkgs.toMutableList().also { java.util.Collections.swap(it, idx, idx + 1) }.joinToString(",")) },
                                 contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
@@ -141,7 +144,7 @@ fun QuickPanel(
                             if (list.isNotEmpty()) {
                                 TextButton(onClick = { BadgeStore.clearHistory(app.packageName) }) { Text("クリア") }
                             }
-                            TextButton(onClick = { onChange(pkgs.filter { it != app.packageName }.joinToString(",")) }) { Text("外す") }
+                            if (editing) TextButton(onClick = { onChange(pkgs.filter { it != app.packageName }.joinToString(",")) }) { Text("外す") }
                         }
                         if (list.isEmpty()) {
                             Text("新しい通知はありません", color = cs.outline, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
@@ -190,7 +193,7 @@ fun QuickPanel(
                 if (notifs.isNotEmpty() && shown.any { notifs[it.packageName].isNullOrEmpty().not() }) {
                     Text("通知は、元の通知を消してもここに残ります(クリアで消去)。", color = cs.outline, fontSize = 12.sp)
                 }
-                OutlinedButton(onClick = { picking = true }) { Text("アプリを選ぶ(追加)") }
+                if (editing) OutlinedButton(onClick = { picking = true }) { Text("アプリを追加") }
                 Text(
                     "通知アクセスを許可すると、通知の内容がここに出ます。アカウントのログイン連携ではなく、端末に届いた通知を表示する仕組みです。",
                     color = cs.outline,

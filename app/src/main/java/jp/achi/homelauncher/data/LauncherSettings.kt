@@ -35,6 +35,12 @@ data class LauncherSettings(
     val searchHistoryCount: Int = 5,
     /** フォルダを開いたときの1行のアプリ数(3〜5) */
     val folderCols: Int = 4,
+    /** フォルダを開いたときの背景色(auto=テーマの色)と不透明度 */
+    val folderBgMode: String = "auto",
+    val folderBgColor: Int = 0xFF5B1230.toInt(),
+    val folderBgAlpha: Float = 0.9f,
+    /** ドックのページ数(0=自動) */
+    val dockPages: Int = 0,
     /** 自由配置モードをウィジェット(・スタック・メディア等)だけに適用する */
     val freeWidgetsOnly: Boolean = false,
     /** アイコン(アプリ・ショートカット)を別のアイコン/フォルダに重ねたらフォルダにまとめる */
@@ -107,6 +113,10 @@ data class LauncherSettings(
         put("mediaShowSource", mediaShowSource)
         put("searchHistoryCount", searchHistoryCount)
         put("folderCols", folderCols)
+        put("folderBgMode", folderBgMode)
+        put("folderBgColor", folderBgColor)
+        put("folderBgAlpha", folderBgAlpha.toDouble())
+        put("dockPages", dockPages)
         put("freeWidgetsOnly", freeWidgetsOnly)
         put("mergeOnDrop", mergeOnDrop)
         put("quickPanel", quickPanel)
@@ -184,6 +194,10 @@ data class LauncherSettings(
                 mediaShowSource = o.optBoolean("mediaShowSource", d.mediaShowSource),
                 searchHistoryCount = o.optInt("searchHistoryCount", d.searchHistoryCount).coerceIn(0, 10),
                 folderCols = o.optInt("folderCols", d.folderCols).coerceIn(3, 5),
+                folderBgMode = oneOf(o.optString("folderBgMode", d.folderBgMode), setOf("auto", "custom"), d.folderBgMode),
+                folderBgColor = o.optInt("folderBgColor", d.folderBgColor),
+                folderBgAlpha = o.alpha("folderBgAlpha", d.folderBgAlpha, 0.2f),
+                dockPages = o.optInt("dockPages", d.dockPages).coerceIn(0, 10),
                 freeWidgetsOnly = o.optBoolean("freeWidgetsOnly", d.freeWidgetsOnly),
                 mergeOnDrop = o.optBoolean("mergeOnDrop", d.mergeOnDrop),
                 quickPanel = o.optBoolean("quickPanel", d.quickPanel),
