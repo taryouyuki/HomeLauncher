@@ -354,14 +354,25 @@ fun IconSetBox(
     badges: Map<String, List<jp.achi.homelauncher.media.BadgeStore.Notif>>,
     onLaunch: (jp.achi.homelauncher.data.AppInfo) -> Unit,
     onDoubleTap: (String) -> Unit,
+    folders: List<jp.achi.homelauncher.data.Folder>,
+    onLaunchShortcut: (HomeItem) -> Unit,
+    onOpenFolder: (String) -> Unit,
     onSelect: () -> Unit,
 ) {
     val cols = set.spanX.coerceAtLeast(1)
     val rows = set.spanY.coerceAtLeast(1)
     val cap = cols * rows
-    val pairs = children.mapNotNull { c -> appMap[c.appKey]?.let { it to c.dtap } }
-    val apps = pairs.map { it.first }
-    val chunks = pairs.chunked(cap)
+    // アプリ・ショートカット・フォルダをそのまま入れられる
+    val valid = children.filter { c ->
+        when (c.type) {
+            HomeItem.APP -> appMap[c.appKey] != null
+            HomeItem.SHORTCUT -> true
+            HomeItem.FOLDER -> folders.any { it.id == c.ref }
+            else -> false
+        }
+    }
+    val apps = valid
+    val chunks = valid.chunked(cap)
     val count = chunks.size.coerceAtLeast(1)
     val loop = count > 1
     val virtual = if (loop) count * 1000 else 1
@@ -405,14 +416,45 @@ fun IconSetBox(
                     for (r in 0 until rows) {
                         Row(Modifier.weight(1f).fillMaxWidth()) {
                             for (c in 0 until cols) {
-                                val pair = page.getOrNull(r * cols + c)
-                                val app = pair?.first
+                                val child = page.getOrNull(r * cols + c)
+                                val app = child?.takeIf { it.type == HomeItem.APP }?.let { appMap[it.appKey] }
+                                val iconDp = minOf(settings.iconSizeDp, (cellW - 8f).toInt()).coerceAtLeast(24)
                                 Box(Modifier.weight(1f).fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    if (app != null) {
+                                    if (child != null && child.type == HomeItem.SHORTCUT) {
+                                        jp.achi.homelauncher.ui.ShortcutCell(
+                                            item = child,
+                                            iconSizeDp = iconDp,
+                                            showLabel = settings.showLabels,
+                                            labelSizeSp = settings.labelSizeSp,
+                                            iconAlpha = settings.iconAlpha,
+                                            modifier = Modifier.fillMaxSize(),
+                                            onClick = { if (locked) currentSelect() else onLaunchShortcut(child) },
+                                            onLongClick = { currentSelect() },
+                                            onDoubleClick = child.dtap.takeIf { it.isNotEmpty() && !locked }?.let { code -> { onDoubleTap(code) } },
+                                            labelLines = settings.labelLines,
+                                        )
+                                    } else if (child != null && child.type == HomeItem.FOLDER) {
+                                        val folder = folders.firstOrNull { it.id == child.ref }
+                                        if (folder != null) {
+                                            jp.achi.homelauncher.ui.FolderTile(
+                                                folder = folder,
+                                                appMap = appMap,
+                                                iconSizeDp = iconDp,
+                                                showLabel = settings.showLabels,
+                                                labelSizeSp = settings.labelSizeSp,
+                                                iconAlpha = settings.iconAlpha,
+                                                onWallpaper = true,
+                                                modifier = Modifier.fillMaxSize(),
+                                                labelLines = settings.labelLines,
+                                                onClick = { if (locked) currentSelect() else onOpenFolder(folder.id) },
+                                                onLongClick = { currentSelect() },
+                                            )
+                                        }
+                                    } else if (app != null) {
                                         val badge = if (settings.showBadges) badges[app.packageName]?.size ?: 0 else 0
                                         jp.achi.homelauncher.ui.AppCell(
                                             app = app,
-                                            iconSizeDp = minOf(settings.iconSizeDp, (cellW - 8f).toInt()).coerceAtLeast(24),
+                                            iconSizeDp = iconDp,
                                             showLabel = settings.showLabels,
                                             labelSizeSp = settings.labelSizeSp,
                                             onWallpaper = true,
@@ -422,7 +464,7 @@ fun IconSetBox(
                                             iconAlpha = settings.iconAlpha,
                                             badge = badge,
                                             labelLines = settings.labelLines,
-                                            onDoubleClick = pair?.second?.takeIf { it.isNotEmpty() && !locked }?.let { code -> { onDoubleTap(code) } },
+                                            onDoubleClick = child?.dtap?.takeIf { it.isNotEmpty() && !locked }?.let { code -> { onDoubleTap(code) } },
                                         )
                                     }
                                 }

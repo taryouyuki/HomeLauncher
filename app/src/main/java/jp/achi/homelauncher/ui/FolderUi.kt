@@ -136,6 +136,9 @@ fun FolderDialog(
     onRemoveFromFolder: (AppInfo) -> Unit,
     onLaunchShortcut: (pkg: String, id: String) -> Unit = { _, _ -> },
     onRemoveEntry: (String) -> Unit = {},
+    dtapMap: Map<String, String> = emptyMap(),
+    onDtap: (String) -> Unit = {},
+    onSetDtap: (String) -> Unit = {},
     onAddApp: (AppInfo) -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
@@ -197,6 +200,7 @@ fun FolderDialog(
                                     modifier = Modifier.padding(vertical = 8.dp),
                                     onClick = { onLaunchShortcut(pkg, sid) },
                                     onLongClick = { menuSc = e },
+                                    onDoubleClick = dtapMap["fd:$e"]?.takeIf { it.isNotEmpty() }?.let { code -> { onDtap(code) } },
                                 )
                             } else AppCell(
                                 app = app,
@@ -208,6 +212,7 @@ fun FolderDialog(
                                 modifier = Modifier.padding(vertical = 8.dp),
                                 onClick = { onLaunch(app) },
                                 onLongClick = { menuApp = app },
+                                onDoubleClick = dtapMap["fd:${app.key}"]?.takeIf { it.isNotEmpty() }?.let { code -> { onDtap(code) } },
                             )
                         }
                     }
@@ -279,10 +284,16 @@ fun FolderDialog(
     menuSc?.let { e ->
         MenuDialog(
             title = e.removePrefix("sc:").split('|', limit = 3).getOrElse(2) { "ショートカット" },
-            entries = listOf("フォルダから外す" to {
-                menuSc = null
-                onRemoveEntry(e)
-            }),
+            entries = listOf(
+                "ダブルタップ設定" + (if (dtapMap["fd:$e"].isNullOrEmpty()) "" else "(設定済)") to {
+                    menuSc = null
+                    onSetDtap(e)
+                },
+                "フォルダから外す" to {
+                    menuSc = null
+                    onRemoveEntry(e)
+                },
+            ),
             onDismiss = { menuSc = null },
         )
     }
@@ -291,6 +302,10 @@ fun FolderDialog(
         MenuDialog(
             title = app.label,
             entries = listOf(
+                "ダブルタップ設定" + (if (dtapMap["fd:${app.key}"].isNullOrEmpty()) "" else "(設定済)") to {
+                    menuApp = null
+                    onSetDtap(app.key)
+                },
                 "ホーム画面に出す" to {
                     menuApp = null
                     onPutOnHome(app)

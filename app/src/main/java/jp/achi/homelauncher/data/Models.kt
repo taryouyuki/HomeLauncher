@@ -161,11 +161,13 @@ data class HomeItem(
         const val STACK = "stack"
         /** アイコンセット: 数個〜9個のアプリを1つの枠にまとめ、左右スワイプでセットを切り替える(最後の次は最初に戻る)。子は parent = このid */
         const val ICONS = "icons"
+        /** ホームに置く操作アイコン。ref = "drawer"(アプリ一覧) / "quick"(クイックパネル) */
+        const val ACTION = "action"
         const val SEARCH = "search"
         const val MEDIA = "media"
         /** ブラウザ等から「ホーム画面に追加」されたショートカット。pkg=パッケージ, cls=ショートカットID, ref=表示名 */
         const val SHORTCUT = "shortcut"
-        private val TYPES = setOf(APP, WIDGET, FOLDER, STACK, ICONS, SEARCH, MEDIA, SHORTCUT)
+        private val TYPES = setOf(APP, WIDGET, FOLDER, STACK, ICONS, ACTION, SEARCH, MEDIA, SHORTCUT)
 
         fun fromJson(o: JSONObject): HomeItem {
             val type = o.getString("type")

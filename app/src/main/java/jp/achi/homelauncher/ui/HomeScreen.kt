@@ -136,6 +136,7 @@ private class HomeEnv(
     val onBadgeMenu: (HomeItem) -> Unit,
     val dockDtap: Map<String, String>,
     val onDockDtap: (String) -> Unit,
+    val onAction: (String) -> Unit,
 )
 
 @Composable
@@ -343,13 +344,13 @@ fun HomeScreen(
      */
     fun tryMerge(sel: HomeItem, page: Int, rx: Float, ry: Float, rw: Float, rh: Float): Boolean {
         if (!vm.settings.value.mergeOnDrop) return false
-        if (sel.type != HomeItem.APP && sel.type != HomeItem.SHORTCUT) return false
+        if (sel.type != HomeItem.APP && sel.type != HomeItem.SHORTCUT && sel.type != HomeItem.FOLDER) return false
         var best: HomeItem? = null
         var bestRatio = 0f
         for (t in vm.items.value) {
             if (t.id == sel.id || t.parent.isNotEmpty() || t.page != page) continue
-            val ok = t.type == HomeItem.APP || t.type == HomeItem.SHORTCUT || t.type == HomeItem.FOLDER ||
-                (t.type == HomeItem.ICONS && sel.type == HomeItem.APP)
+            val ok = t.type == HomeItem.ICONS ||
+                (sel.type != HomeItem.FOLDER && (t.type == HomeItem.APP || t.type == HomeItem.SHORTCUT || t.type == HomeItem.FOLDER))
             if (!ok) continue
             val tx = if (t.free) t.fx else t.x.toFloat()
             val ty = if (t.free) t.fy else t.y.toFloat()
@@ -406,6 +407,7 @@ fun HomeScreen(
         onBadgeMenu = { badgeMenuItem = it },
         dockDtap = dockDtap,
         onDockDtap = { code -> launchDtap(context, vm, appMap, code) },
+        onAction = { kind -> if (kind == "drawer") onOpenDrawer() else quickOpen = true },
     )
 
     Box(
@@ -555,7 +557,8 @@ fun HomeScreen(
                     ) {
                         HorizontalPager(
                             state = dockPager,
-                            modifier = Modifier.fillMaxWidth().height(settings.dockHeightDp.dp),
+                            // アイコンサイズに合わせて、ドックの高さが足りなければ自動で広げる
+                            modifier = Modifier.fillMaxWidth().height(maxOf(settings.dockHeightDp, settings.dockIconSizeDp + 16).dp),
                         ) { vp ->
                             val p = vp % dockPages
                             Row(
@@ -778,6 +781,14 @@ fun HomeScreen(
             add("ここにウィジェットスタックを作成" to {
                 emptyMenu = false
                 report(vm.createStack(at))
+            })
+            add("ここに「アプリ一覧」アイコンを置く" to {
+                emptyMenu = false
+                report(vm.createAction("drawer", at))
+            })
+            add("ここに「クイックパネル」アイコンを置く" to {
+                emptyMenu = false
+                report(vm.createAction("quick", at))
             })
             add("ここにアイコンセットを作成(ページ切替)" to {
                 emptyMenu = false
@@ -1047,6 +1058,15 @@ fun HomeScreen(
                     if (!ShortcutHelper.launch(context, pkg, id)) toast(context, "ショートカットを開けません")
                 },
                 onRemoveEntry = { vm.removeFromFolder(folder.id, it) },
+                dtapMap = dockDtap,
+                onDtap = { code ->
+                    openFolderId = null
+                    launchDtap(context, vm, appMap, code)
+                },
+                onSetDtap = { entry ->
+                    openFolderId = null
+                    dtapItemId = "dock:fd:$entry"
+                },
                 onAddApp = { vm.addToFolder(folder.id, it.key) },
                 onRename = { vm.renameFolder(folder.id, it) },
                 onDelete = {
@@ -1105,7 +1125,7 @@ fun HomeScreen(
     }
 
     iconSetManageId?.let { sid ->
-        val kids = items.filter { it.parent == sid && it.type == HomeItem.APP }
+        val kids = items.filter { it.parent == sid }
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { iconSetManageId = null },
             title = { Text("アイコンセットのアプリ") },
@@ -1117,7 +1137,11 @@ fun HomeScreen(
                         kids.forEach { k -> item(key = k.id) {
                             Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    appMap[k.appKey]?.label ?: k.pkg,
+                                    when (k.type) {
+                                        HomeItem.FOLDER -> "📁 " + (folders.firstOrNull { it.id == k.ref }?.name ?: "フォルダ")
+                                        HomeItem.SHORTCUT -> "↗ " + k.ref
+                                        else -> appMap[k.appKey]?.label ?: k.pkg
+                                    },
                                     modifier = Modifier.weight(1f),
                                     maxLines = 1,
                                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1142,6 +1166,16 @@ fun HomeScreen(
                         },
                         modifier = Modifier.padding(top = 8.dp),
                     ) { Text("アプリを追加") }
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { vm.createFolderInSet(sid) },
+                        modifier = Modifier.padding(top = 4.dp),
+                    ) { Text("フォルダを追加") }
+                    Text(
+                        "ホームのショートカット・フォルダは、セットに重ねてドロップすると入ります。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.outline,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
                 }
             },
         )
@@ -1227,6 +1261,14 @@ fun HomeScreen(
                 title = if (folderId != null) folders.firstOrNull { it.id == folderId }?.name ?: "フォルダ" else appMap[entry]?.label ?: "ドック",
                 entries = if (folderId != null) {
                     listOf(
+                        "左へ移動" to {
+                            dockMenuIndex = null
+                            vm.moveDockEntry(idx, idx - 1)
+                        },
+                        "右へ移動" to {
+                            dockMenuIndex = null
+                            vm.moveDockEntry(idx, idx + 1)
+                        },
                         "フォルダを開く" to {
                             dockMenuIndex = null
                             openFolderId = folderId
@@ -1238,6 +1280,14 @@ fun HomeScreen(
                     )
                 } else {
                     listOf(
+                        "左へ移動" to {
+                            dockMenuIndex = null
+                            vm.moveDockEntry(idx, idx - 1)
+                        },
+                        "右へ移動" to {
+                            dockMenuIndex = null
+                            vm.moveDockEntry(idx, idx + 1)
+                        },
                         "ダブルタップ設定" + (if (dockDtap[entry].isNullOrEmpty()) "" else "(設定済)") to {
                             dockMenuIndex = null
                             dtapItemId = "dock:$entry"
@@ -1377,7 +1427,10 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
             )
             HomeItem.ICONS -> IconSetBox(
                 set = item,
-                children = env.items.filter { it.parent == item.id && it.type == HomeItem.APP },
+                children = env.items.filter { it.parent == item.id },
+                folders = env.folders,
+                onLaunchShortcut = env.onLaunchShortcut,
+                onOpenFolder = env.onOpenFolder,
                 appMap = env.appMap,
                 settings = s,
                 widthDp = w.value.toInt(),
@@ -1387,6 +1440,16 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 onLaunch = env.onLaunch,
                 onDoubleTap = env.onDoubleTap,
                 onSelect = { env.onSelect(item.id) },
+            )
+            HomeItem.ACTION -> ActionIconCell(
+                kind = item.ref,
+                iconSizeDp = iconDp,
+                showLabel = s.showLabels,
+                labelSizeSp = s.labelSizeSp,
+                iconAlpha = iconAlpha,
+                modifier = Modifier.fillMaxSize(),
+                onClick = act { env.onAction(item.ref) },
+                onLongClick = { env.onSelect(item.id) },
             )
             HomeItem.SEARCH -> SearchBarTile(
                 bgAlpha = if (item.alpha >= 0f) item.alpha else s.searchBarAlpha,
@@ -1590,12 +1653,13 @@ private fun DockSlot(
     onLong: () -> Unit,
 ) {
     val s = env.settings
-    val iconDp = min(s.dockIconSizeDp, s.dockHeightDp - 8).coerceAtLeast(24)
+    var slotW by remember { mutableFloatStateOf(1f) }
+    val slotDp = (slotW / LocalDensity.current.density).toInt()
+    val iconDp = (if (slotDp > 0) min(s.dockIconSizeDp, slotDp - 4) else s.dockIconSizeDp).coerceAtLeast(24)
     val folderId = entry?.let { DockEntry.folderId(it) }
     val folder = folderId?.let { id -> env.folders.firstOrNull { it.id == id } }
     val app = if (folderId == null && entry != null) env.appMap[entry] else null
     var dragDx by remember { mutableFloatStateOf(0f) }
-    var slotW by remember { mutableFloatStateOf(1f) }
     val currentLong by rememberUpdatedState(onLong)
     val currentMove by rememberUpdatedState(onMove)
     val currentLift by rememberUpdatedState(onLift)

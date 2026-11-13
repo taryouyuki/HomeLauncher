@@ -163,8 +163,9 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         val s = settings.value
         var base = items.value.filter { it.id != c.id && it.parent != c.id }
         for (kid in items.value.filter { it.parent == c.id }) {
-            val sx = if (kid.type == HomeItem.APP) 1 else c.spanX
-            val sy = if (kid.type == HomeItem.APP) 1 else c.spanY
+            val icon = kid.type == HomeItem.APP || kid.type == HomeItem.SHORTCUT || kid.type == HomeItem.FOLDER
+            val sx = if (icon) 1 else c.spanX
+            val sy = if (icon) 1 else c.spanY
             val cell = GridLogic.findFreeCell(base, s.pageCount, s.gridCols, s.gridRows, sx, sy)
             val (pg, x, y) = cell ?: Triple(c.page, c.x, c.y)
             base = base + kid.copy(parent = "", page = pg, x = x, y = y, spanX = sx, spanY = sy, free = false)
@@ -182,6 +183,21 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** アイコンセットの末尾にアプリを追加する(並びは子の順。枠の大きさごとに自動でセットに分かれる)。 */
+    /** アイコンセットの中に新しいフォルダを作る。 */
+    fun createFolderInSet(setId: String): Boolean {
+        if (items.value.none { it.id == setId && it.type == HomeItem.ICONS }) return false
+        val folder = Folder(name = "フォルダ")
+        folders.update { it + folder }
+        persistFolders()
+        items.update { it + HomeItem(type = HomeItem.FOLDER, page = 0, x = 0, y = 0, ref = folder.id, parent = setId) }
+        persistItems()
+        return true
+    }
+
+    /** 「アプリ一覧」「クイックパネル」を開くアイコンをホームに置く。 */
+    fun createAction(kind: String, at: CellAt? = null): PlaceResult =
+        place(1, 1, at) { p, x, y -> HomeItem(type = HomeItem.ACTION, page = p, x = x, y = y, ref = kind) }
+
     fun addToIconSet(setId: String, packageName: String, className: String) {
         if (items.value.none { it.id == setId && it.type == HomeItem.ICONS }) return
         items.update { it + HomeItem(type = HomeItem.APP, page = 0, x = 0, y = 0, pkg = packageName, cls = className, parent = setId) }
@@ -190,7 +206,10 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ホームに置いてあるアプリを、アイコンセットへ移す(ドラッグで重ねたとき)。 */
     fun moveHomeAppToIconSet(draggedId: String, setId: String): Boolean {
-        val dragged = items.value.firstOrNull { it.id == draggedId && it.type == HomeItem.APP && it.parent.isEmpty() } ?: return false
+        val dragged = items.value.firstOrNull {
+            it.id == draggedId && it.parent.isEmpty() &&
+                (it.type == HomeItem.APP || it.type == HomeItem.SHORTCUT || it.type == HomeItem.FOLDER)
+        } ?: return false
         if (items.value.none { it.id == setId && it.type == HomeItem.ICONS }) return false
         items.update { list -> list.filter { it.id != draggedId } + dragged.copy(parent = setId, page = 0, x = 0, y = 0, free = false) }
         persistItems()
