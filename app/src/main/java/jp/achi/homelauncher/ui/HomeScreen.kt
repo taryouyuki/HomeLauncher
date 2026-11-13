@@ -173,6 +173,10 @@ fun HomeScreen(
     var carrying by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     var emptyMenu by remember { mutableStateOf(false) }
+    var emptyMenuPage by remember { mutableStateOf("") }
+    var scPickApp by remember { mutableStateOf(false) }
+    var scApp by remember { mutableStateOf<AppInfo?>(null) }
+    var scAt by remember { mutableStateOf<CellAt?>(null) }
     /** 空き地を長押しした位置(ページ, 列, 行)。メニューで追加するものはここに置く。 */
     var pendingAt by remember { mutableStateOf<CellAt?>(null) }
     var editItem by remember { mutableStateOf<HomeItem?>(null) }
@@ -769,9 +773,10 @@ fun HomeScreen(
     }
 
     // ---- メニュー・ダイアログ ----
+    LaunchedEffect(emptyMenu) { if (!emptyMenu) emptyMenuPage = "" }
     if (emptyMenu) {
         val at = pendingAt
-        val entries = buildList<Pair<String, () -> Unit>> {
+        val addEntries = buildList<Pair<String, () -> Unit>> {
             add("ここにウィジェットを追加" to {
                 emptyMenu = false
                 widgetTarget = ""
@@ -814,17 +819,13 @@ fun HomeScreen(
                     report(vm.addSpecial(HomeItem.MEDIA, at))
                 })
             }
-            add("画面を更新(ウィジェット・アプリ・通知)" to {
+            add("ここにショートカットだけを置く" to {
                 emptyMenu = false
-                refreshAll(vm, widgets, media)
-                refreshTick++
-                toast(context, "画面を更新しました")
+                scAt = at
+                scPickApp = true
             })
-            add((if (editMode) "編集モードを終わる" else "編集モードにする(タップで編集)") to {
-                emptyMenu = false
-                editMode = !editMode
-                selectedId = null
-            })
+        }
+        val adjustEntries = buildList<Pair<String, () -> Unit>> {
             add("自動調整: すべて(アイコン+ウィジェット+重なり)" to {
                 emptyMenu = false
                 vm.autoAdjust(cellDp.first, cellDp.second)
@@ -855,10 +856,6 @@ fun HomeScreen(
                 emptyMenu = false
                 vm.harmonize(true, false)
             })
-            add("クイックパネルを開く" to {
-                emptyMenu = false
-                quickOpen = true
-            })
             add("整列: アプリアイコンのみ" to {
                 emptyMenu = false
                 vm.arrangeIcons()
@@ -869,6 +866,29 @@ fun HomeScreen(
                 vm.arrangeWidgets()
                 toast(context, "ウィジェットを整列しました")
             })
+        }
+        val topEntries = buildList<Pair<String, () -> Unit>> {
+            add("追加する  ›" to { emptyMenuPage = "add" })
+            add("整列・自動調整  ›" to { emptyMenuPage = "adjust" })
+            add("ランチャー設定" to {
+                emptyMenu = false
+                onOpenSettings()
+            })
+            add("クイックパネルを開く" to {
+                emptyMenu = false
+                quickOpen = true
+            })
+            add("画面を更新(ウィジェット・アプリ・通知)" to {
+                emptyMenu = false
+                refreshAll(vm, widgets, media)
+                refreshTick++
+                toast(context, "画面を更新しました")
+            })
+            add((if (editMode) "編集モードを終わる" else "編集モードにする(タップで編集)") to {
+                emptyMenu = false
+                editMode = !editMode
+                selectedId = null
+            })
             add("壁紙を変更" to {
                 emptyMenu = false
                 runCatching {
@@ -878,12 +898,42 @@ fun HomeScreen(
                     )
                 }.onFailure { toast(context, "壁紙設定を開けません") }
             })
-            add("ランチャー設定" to {
-                emptyMenu = false
-                onOpenSettings()
-            })
         }
-        MenuDialog(title = "ホーム画面", entries = entries, onDismiss = { emptyMenu = false })
+        val entries = when (emptyMenuPage) {
+            "add" -> listOf<Pair<String, () -> Unit>>("‹ 戻る" to { emptyMenuPage = "" }) + addEntries
+            "adjust" -> listOf<Pair<String, () -> Unit>>("‹ 戻る" to { emptyMenuPage = "" }) + adjustEntries
+            else -> topEntries
+        }
+        MenuDialog(
+            title = when (emptyMenuPage) { "add" -> "追加する"; "adjust" -> "整列・自動調整"; else -> "ホーム画面" },
+            entries = entries,
+            onDismiss = { emptyMenu = false },
+        )
+    }
+
+    if (scPickApp) {
+        AppPickerDialog(
+            apps = AppSorter.sort(apps, SortMode.NAME, emptyMap()),
+            onPick = {
+                scPickApp = false
+                scApp = it
+            },
+            onDismiss = { scPickApp = false },
+        )
+    }
+    scApp?.let { app ->
+        val list = remember(app.key) { ShortcutHelper.list(context, app.packageName) }
+        MenuDialog(
+            title = "「${app.label}」のショートカット",
+            entries = if (list.isEmpty()) listOf("ショートカットがありません" to { scApp = null })
+            else list.map { (sid, label) ->
+                label to {
+                    scApp = null
+                    report(vm.addShortcut(app.packageName, sid, label, scAt))
+                }
+            },
+            onDismiss = { scApp = null },
+        )
     }
 
     appMenuItem?.let { item ->
@@ -1261,13 +1311,19 @@ fun HomeScreen(
                 title = if (folderId != null) folders.firstOrNull { it.id == folderId }?.name ?: "フォルダ" else appMap[entry]?.label ?: "ドック",
                 entries = if (folderId != null) {
                     listOf(
-                        "左へ移動" to {
+                        "ここにアプリを追加(今あるものは右へずらす)" to {
                             dockMenuIndex = null
-                            vm.moveDockEntry(idx, idx - 1)
+                            dockEmptyIndex = idx
                         },
-                        "右へ移動" to {
-                            dockMenuIndex = null
-                            vm.moveDockEntry(idx, idx + 1)
+                        "◀ 左へ移動(続けて動かせます)" to {
+                            val n = (idx - 1).coerceAtLeast(0)
+                            vm.moveDockEntry(idx, n)
+                            dockMenuIndex = n
+                        },
+                        "右へ移動 ▶(続けて動かせます)" to {
+                            val n = (idx + 1).coerceAtMost((dock.size - 1).coerceAtLeast(0))
+                            vm.moveDockEntry(idx, n)
+                            dockMenuIndex = n
                         },
                         "フォルダを開く" to {
                             dockMenuIndex = null
@@ -1280,13 +1336,19 @@ fun HomeScreen(
                     )
                 } else {
                     listOf(
-                        "左へ移動" to {
+                        "ここにアプリを追加(今あるものは右へずらす)" to {
                             dockMenuIndex = null
-                            vm.moveDockEntry(idx, idx - 1)
+                            dockEmptyIndex = idx
                         },
-                        "右へ移動" to {
-                            dockMenuIndex = null
-                            vm.moveDockEntry(idx, idx + 1)
+                        "◀ 左へ移動(続けて動かせます)" to {
+                            val n = (idx - 1).coerceAtLeast(0)
+                            vm.moveDockEntry(idx, n)
+                            dockMenuIndex = n
+                        },
+                        "右へ移動 ▶(続けて動かせます)" to {
+                            val n = (idx + 1).coerceAtMost((dock.size - 1).coerceAtLeast(0))
+                            vm.moveDockEntry(idx, n)
+                            dockMenuIndex = n
                         },
                         "ダブルタップ設定" + (if (dockDtap[entry].isNullOrEmpty()) "" else "(設定済)") to {
                             dockMenuIndex = null

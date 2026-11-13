@@ -35,6 +35,7 @@ object AppCategory {
 
     fun auto(app: AppInfo): String {
         if (app.isGame || app.category == 0) return "ゲーム"
+        if (app.isSystem) return "システム"
         when (app.category) {
             1, 2 -> return "音楽・動画"
             3 -> return "写真"

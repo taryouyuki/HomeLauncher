@@ -474,7 +474,8 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
         dock.update { list ->
             val m = list.toMutableList()
             m.remove(entry)
-            if (index in m.indices) m[index] = entry else m.add(entry)
+            // 指定位置に差し込む(もともとあったものは右へ1つずつずれる)
+            m.add(index.coerceIn(0, m.size), entry)
             m
         }
         prefs.saveDock(dock.value)

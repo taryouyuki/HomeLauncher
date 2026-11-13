@@ -73,9 +73,10 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () 
     var showWork by remember { mutableStateOf(false) }
     val hiddenKeys by vm.hidden.collectAsStateWithLifecycle()
     var showHidden by remember { mutableStateOf(false) }
+    var showSystem by remember { mutableStateOf(false) }
     val allApps = if (showWork) workApps else personalApps
-    val apps = remember(allApps, hiddenKeys, showHidden) {
-        allApps.filter { (it.key in hiddenKeys) == showHidden }
+    val apps = remember(allApps, hiddenKeys, showHidden, showSystem) {
+        allApps.filter { (it.key in hiddenKeys) == showHidden && (!showSystem || it.isSystem) }
     }
     val counts by vm.counts.collectAsStateWithLifecycle()
     val lastLaunch by vm.lastLaunch.collectAsStateWithLifecycle()
@@ -166,6 +167,11 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () 
                 SortChip("よく使う順", settings.drawerSort == SortMode.FREQUENT) { vm.setDrawerSort(SortMode.FREQUENT) }
                 SortChip("更新順", settings.drawerSort == SortMode.UPDATED) { vm.setDrawerSort(SortMode.UPDATED) }
                 SortChip("カテゴリー順", byCategory) { vm.setDrawerSort(SortMode.CATEGORY) }
+                FilterChip(
+                    selected = showSystem,
+                    onClick = { showSystem = !showSystem },
+                    label = { Text("システム") },
+                )
                 if (hiddenKeys.isNotEmpty() || showHidden) {
                     FilterChip(
                         selected = showHidden,
