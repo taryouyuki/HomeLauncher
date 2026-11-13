@@ -424,6 +424,36 @@ object AutoLayout {
     }
 
     /** 自由配置をマスに揃え、はみ出しを直し、重なった項目は空きマスへ移す。 */
+    /**
+     * おまかせ微調整: 配置を大きく変えず、ばらついた大きさ・位置だけをそろえる。
+     * アイコン類は1マスにそろえ、自由配置のものは最も近いマスへ。ウィジェット類は自由配置を最も近いマスの大きさに。
+     * 最後に、はみ出し・重なりだけを整える。
+     */
+    fun harmonize(items: List<HomeItem>, cols: Int, rows: Int, pageCount: Int, icons: Boolean, widgets: Boolean): List<HomeItem> {
+        val snapped = items.map { i ->
+            if (i.parent.isNotEmpty()) return@map i
+            val iconLike = i.type == HomeItem.APP || i.type == HomeItem.SHORTCUT || i.type == HomeItem.FOLDER
+            val widgetLike = i.type == HomeItem.WIDGET || i.type == HomeItem.STACK || i.type == HomeItem.ICONS
+            when {
+                iconLike && icons -> i.copy(
+                    free = false,
+                    x = (if (i.free) Math.round(i.fx) else i.x).coerceIn(0, cols - 1),
+                    y = (if (i.free) Math.round(i.fy) else i.y).coerceIn(0, rows - 1),
+                    spanX = 1, spanY = 1, fw = 1f, fh = 1f,
+                )
+                widgetLike && widgets && i.free -> i.copy(
+                    free = false,
+                    x = Math.round(i.fx).coerceIn(0, cols - 1),
+                    y = Math.round(i.fy).coerceIn(0, rows - 1),
+                    spanX = Math.round(i.fw).coerceIn(1, cols),
+                    spanY = Math.round(i.fh).coerceIn(1, rows),
+                )
+                else -> i
+            }
+        }
+        return tidy(snapped, cols, rows, pageCount)
+    }
+
     fun tidy(items: List<HomeItem>, cols: Int, rows: Int, pageCount: Int): List<HomeItem> {
         val top = items.filter { it.parent.isEmpty() }
             .sortedWith(compareBy({ it.page }, { it.y }, { it.x }))

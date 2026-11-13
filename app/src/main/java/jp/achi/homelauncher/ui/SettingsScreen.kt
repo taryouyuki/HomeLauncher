@@ -293,6 +293,20 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline,
                             )
+                            Section("おまかせ微調整(元に戻せます)")
+                            Text(
+                                "今の配置を大きく変えず、微妙にばらついたサイズ・位置だけをそろえます。実行後はホーム画面の下に「調整前 / 調整後」の切替が出ます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
+                            Row(
+                                Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                OutlinedButton(onClick = { vm.harmonize(true, true); toast(context, "微調整しました(ホームで元に戻せます)") }) { Text("すべて") }
+                                OutlinedButton(onClick = { vm.harmonize(false, true); toast(context, "ウィジェットを微調整しました") }) { Text("ウィジェットのみ") }
+                                OutlinedButton(onClick = { vm.harmonize(true, false); toast(context, "アイコンを微調整しました") }) { Text("アイコンのみ") }
+                            }
                             Section("自動調整(AIなし)")
                             val cellW = cfg.screenWidthDp.toFloat() / s.gridCols
                             val gridH = cfg.screenHeightDp - (if (s.showDock) s.dockHeightDp else 0) - 120f
@@ -338,6 +352,15 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.outline,
                             )
+                            Section("フォルダ")
+                            IntSliderRow("フォルダ内の1行のアプリ数", s.folderCols, 3, 5) { v -> update { it.copy(folderCols = v) } }
+                            Section("クイックパネル(上から下へスワイプ)")
+                            SwitchRow("ホームで上から下へスワイプしてクイックパネルを開く", s.quickPanel) { v -> update { it.copy(quickPanel = v) } }
+                            Text(
+                                "Twitter(X)・Discord・Spotify などの通知とメディア操作を、アプリを開かずに確認できます(通知アクセスの許可が必要)。表示するアプリはパネル内の「アプリを選ぶ」で変えられます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
                             Section("アイコンの形")
                             Row(
                                 Modifier.horizontalScroll(rememberScrollState()).padding(vertical = 4.dp),
@@ -360,9 +383,9 @@ fun SettingsScreen(
                         1 -> {
                             Section("ドック")
                             SwitchRow("ドックを表示", s.showDock) { v -> update { it.copy(showDock = v) } }
-                            IntSliderRow("縦幅", s.dockHeightDp, 48, 160, "dp") { v -> update { it.copy(dockHeightDp = v) } }
+                            IntSliderRow("縦幅", s.dockHeightDp, 48, 240, "dp") { v -> update { it.copy(dockHeightDp = v) } }
                             IntSliderRow("1ページのアイコン数", s.dockCount, 3, 7) { v -> update { it.copy(dockCount = v) } }
-                            IntSliderRow("アイコンサイズ(ドック専用)", s.dockIconSizeDp, 24, 120, "dp") { v -> update { it.copy(dockIconSizeDp = v) } }
+                            IntSliderRow("アイコンサイズ(ドック専用)", s.dockIconSizeDp, 24, 200, "dp") { v -> update { it.copy(dockIconSizeDp = v) } }
                             Text(
                                 "ドックのアイコンは、長押ししたまま左右に動かして並び替えできます(間のアイコンは1つずつずれます)。",
                                 style = MaterialTheme.typography.bodySmall,

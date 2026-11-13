@@ -86,14 +86,81 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun arrangeIcons() {
+        beginAdjust()
         val s = settings.value
         items.update { AutoLayout.arrangeIcons(it, s.gridCols, s.gridRows, s.pageCount) }
         persistItems()
     }
 
     fun arrangeWidgets() {
+        beginAdjust()
         val s = settings.value
         items.update { AutoLayout.arrangeWidgets(it, s.gridCols, s.gridRows, s.pageCount) }
+        persistItems()
+    }
+
+    // ---- 自動調整の「調整前 / 調整後」切替 ----
+    data class AdjustSnap(
+        val beforeItems: List<HomeItem>,
+        val beforeSettings: LauncherSettings,
+        val afterItems: List<HomeItem>? = null,
+        val afterSettings: LauncherSettings? = null,
+        val showingBefore: Boolean = false,
+    )
+
+    val adjust = MutableStateFlow<AdjustSnap?>(null)
+
+    private fun beginAdjust() {
+        // 連続して調整しても、最初の状態に戻せるようにする
+        if (adjust.value == null || adjust.value?.showingBefore == true) {
+            adjust.value = AdjustSnap(items.value, settings.value)
+        }
+    }
+
+    fun adjustShowBefore() {
+        val snap = adjust.value ?: return
+        if (snap.showingBefore) return
+        adjust.value = snap.copy(afterItems = items.value, afterSettings = settings.value, showingBefore = true)
+        items.value = snap.beforeItems
+        persistItems()
+        updateSettings { snap.beforeSettings }
+    }
+
+    fun adjustShowAfter() {
+        val snap = adjust.value ?: return
+        val ai = snap.afterItems ?: return
+        val asx = snap.afterSettings ?: return
+        adjust.value = snap.copy(showingBefore = false)
+        items.value = ai
+        persistItems()
+        updateSettings { asx }
+    }
+
+    fun adjustKeep() {
+        adjust.value = null
+    }
+
+    /** おまかせ微調整(大きく変えず、ばらつきだけそろえる)。 */
+    fun harmonize(icons: Boolean, widgets: Boolean) {
+        beginAdjust()
+        val s = settings.value
+        items.update { AutoLayout.harmonize(it, s.gridCols, s.gridRows, s.pageCount, icons, widgets) }
+        persistItems()
+    }
+
+    /** スタック / アイコンセットを解除して、中身を個別にホームへ出す。 */
+    fun dissolve(containerId: String) {
+        val c = items.value.firstOrNull { it.id == containerId && (it.type == HomeItem.STACK || it.type == HomeItem.ICONS) } ?: return
+        val s = settings.value
+        var base = items.value.filter { it.id != c.id && it.parent != c.id }
+        for (kid in items.value.filter { it.parent == c.id }) {
+            val sx = if (kid.type == HomeItem.APP) 1 else c.spanX
+            val sy = if (kid.type == HomeItem.APP) 1 else c.spanY
+            val cell = GridLogic.findFreeCell(base, s.pageCount, s.gridCols, s.gridRows, sx, sy)
+            val (pg, x, y) = cell ?: Triple(c.page, c.x, c.y)
+            base = base + kid.copy(parent = "", page = pg, x = x, y = y, spanX = sx, spanY = sy, free = false)
+        }
+        items.value = base
         persistItems()
     }
 
@@ -294,6 +361,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     /** アイコン・文字・ドックの大きさだけを自動調整する(ウィジェットや配置は変えない)。 */
     fun autoAdjustIcons(cellWdp: Float, cellHdp: Float) {
+        beginAdjust()
         updateSettings { AutoLayout.fitSettings(it, cellWdp, cellHdp) }
     }
 
@@ -302,6 +370,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
      * はみ出し・重なりを整える(アイコンの大きさ等は変えない)。minSpan は (最小の幅マス, 高さマス) を返す。
      */
     fun autoAdjustWidgets(minSpan: (HomeItem) -> Pair<Int, Int>?) {
+        beginAdjust()
         val s = settings.value
         items.update { list ->
             val resized = list.map { w ->
@@ -337,6 +406,7 @@ class LauncherViewModel(app: Application) : AndroidViewModel(app) {
 
     /** 表示の自動調整: 大きさ(アイコン・文字・ドック)をセルに合わせ、はみ出し・重なり・自由配置を整える。 */
     fun autoAdjust(cellWdp: Float, cellHdp: Float) {
+        beginAdjust()
         updateSettings { AutoLayout.fitSettings(it, cellWdp, cellHdp) }
         val s = settings.value
         items.update { AutoLayout.tidy(it, s.gridCols, s.gridRows, s.pageCount) }

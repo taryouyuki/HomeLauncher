@@ -165,6 +165,8 @@ fun HomeScreen(
     val yomi by vm.yomi.collectAsStateWithLifecycle()
     val dockDtap by vm.dockDtap.collectAsStateWithLifecycle()
     val searchHistory by vm.searchHistory.collectAsStateWithLifecycle()
+    val adjustSnap by vm.adjust.collectAsStateWithLifecycle()
+    var quickOpen by remember { mutableStateOf(false) }
 
     var selectedId by remember { mutableStateOf<String?>(null) }
     var carrying by remember { mutableStateOf(false) }
@@ -223,9 +225,11 @@ fun HomeScreen(
         carrying = false
         emptyMenu = false
         openFolderId = null
+        quickOpen = false
         pagerState.scrollToPage(homeBase + mainPage)
     }
 
+    BackHandler(enabled = quickOpen && !searchOpen) { quickOpen = false }
     BackHandler(enabled = searchOpen) { searchOpen = false }
     BackHandler(enabled = (selectedId != null || editMode) && !searchOpen) {
         if (selectedId != null) selectedId = null else editMode = false
@@ -403,6 +407,10 @@ fun HomeScreen(
                     }
                     if (!SwipeGuard.widgetTouched && !editingRef && ty < -120f && abs(ty) > abs(tx) * 1.5f) {
                         onOpenDrawer()
+                    } else if (!SwipeGuard.widgetTouched && !editingRef && ty > 160f && abs(ty) > abs(tx) * 1.5f &&
+                        vm.settings.value.quickPanel
+                    ) {
+                        quickOpen = true
                     }
                 }
             },
@@ -633,6 +641,12 @@ fun HomeScreen(
                         TextButton(onClick = { dtapItemId = selectedItem.id }) {
                             Text(if (selectedItem.dtap.isEmpty()) "ダブルタップ設定" else "ダブルタップ設定(設定済)")
                         }
+                        if (selectedItem.dtap.isNotEmpty()) {
+                            TextButton(onClick = {
+                                vm.updateItem(selectedItem.id) { it.copy(dtap = "") }
+                                toast(context, "ダブルタップ設定を解除しました")
+                            }) { Text("ダブルタップ解除") }
+                        }
                     }
                     if (selectedItem.type == HomeItem.WIDGET || selectedItem.type == HomeItem.STACK) {
                         TextButton(onClick = { alphaItemId = selectedItem.id }) {
@@ -641,8 +655,18 @@ fun HomeScreen(
                     }
                     if (selectedItem.type == HomeItem.STACK) {
                         TextButton(onClick = { stackManageId = selectedItem.id }) { Text("スタック管理") }
+                        TextButton(onClick = {
+                            vm.dissolve(selectedItem.id)
+                            selectedId = null
+                            toast(context, "スタックを解除しました(ウィジェットを個別に出しました)")
+                        }) { Text("スタック解除") }
                     }
                     if (selectedItem.type == HomeItem.ICONS) {
+                        TextButton(onClick = {
+                            vm.dissolve(selectedItem.id)
+                            selectedId = null
+                            toast(context, "アイコンセットを解除しました")
+                        }) { Text("セット解除") }
                         TextButton(onClick = { iconSetManageId = selectedItem.id }) { Text("セット管理") }
                     }
                     TextButton(onClick = { deleteItem(selectedItem) }) { Text("削除") }
@@ -652,6 +676,48 @@ fun HomeScreen(
                     }) { Text("完了") }
                 }
             }
+        }
+
+        adjustSnap?.let { snap ->
+            Card(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.systemBars)
+                    .padding(bottom = (if (settings.showDock) settings.dockHeightDp + 60 else 24).dp, start = 8.dp, end = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.inverseSurface),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
+                    Text(
+                        if (snap.showingBefore) "調整前を表示中" else "調整後を表示中",
+                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                        fontSize = 13.sp,
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                    if (snap.showingBefore) {
+                        TextButton(onClick = { vm.adjustShowAfter() }) { Text("調整後を見る") }
+                    } else {
+                        TextButton(onClick = { vm.adjustShowBefore() }) { Text("元に戻して見る") }
+                    }
+                    TextButton(onClick = { vm.adjustKeep() }) { Text(if (snap.showingBefore) "このまま確定" else "確定") }
+                }
+            }
+        }
+
+        if (quickOpen) {
+            QuickPanel(
+                apps = apps,
+                quickApps = settings.quickApps,
+                notifs = badges,
+                mediaState = mediaState,
+                media = media,
+                onLaunch = {
+                    quickOpen = false
+                    launchApp(it)
+                },
+                onChange = { v -> vm.updateSettings { it.copy(quickApps = v) } },
+                onRequestNotificationAccess = onRequestNotificationAccess,
+                onClose = { quickOpen = false },
+            )
         }
 
         if (searchOpen) {
@@ -738,6 +804,22 @@ fun HomeScreen(
                 emptyMenu = false
                 vm.autoAdjustIcons(cellDp.first, cellDp.second)
                 toast(context, "アイコン・文字・ドックの大きさを自動調整しました")
+            })
+            add("おまかせ微調整: すべて(元に戻せます)" to {
+                emptyMenu = false
+                vm.harmonize(true, true)
+            })
+            add("おまかせ微調整: ウィジェットのみ" to {
+                emptyMenu = false
+                vm.harmonize(false, true)
+            })
+            add("おまかせ微調整: アイコンのみ" to {
+                emptyMenu = false
+                vm.harmonize(true, false)
+            })
+            add("クイックパネルを開く" to {
+                emptyMenu = false
+                quickOpen = true
             })
             add("整列: アプリアイコンのみ" to {
                 emptyMenu = false
@@ -890,6 +972,8 @@ fun HomeScreen(
                 allApps = apps,
                 iconSizeDp = settings.drawerIconSizeDp,
                 labelSizeSp = settings.labelSizeSp,
+                cols = settings.folderCols,
+                labelLines = settings.labelLines.coerceAtLeast(1),
                 onLaunch = {
                     openFolderId = null
                     launchApp(it)
@@ -1237,7 +1321,8 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 onClick = act { env.onOpenSearch() },
                 onLongClick = { env.onSelect(item.id) },
             )
-            HomeItem.MEDIA -> MediaBar(
+            HomeItem.MEDIA -> Box(Modifier.fillMaxSize()) {
+              MediaBar(
                 state = env.mediaState,
                 media = env.media,
                 bgAlpha = if (item.alpha >= 0f) item.alpha else s.mediaBarAlpha,
@@ -1246,7 +1331,17 @@ private fun GridItem(item: HomeItem, env: HomeEnv, cellW: Dp, cellH: Dp) {
                 showSource = s.mediaShowSource,
                 onRequestPermission = env.onRequestNotificationAccess,
                 onLongClick = { env.onSelect(item.id) },
-            )
+              )
+              if (editing) {
+                  // 編集中はボタンを無効にして、タップでメディアバーを選択(移動・サイズ変更)できるようにする
+                  Box(
+                      Modifier.fillMaxSize().combinedClickable(
+                          onClick = { env.onSelect(item.id) },
+                          onLongClick = { env.onSelect(item.id) },
+                      ),
+                  )
+              }
+            }
         }
     }
 }

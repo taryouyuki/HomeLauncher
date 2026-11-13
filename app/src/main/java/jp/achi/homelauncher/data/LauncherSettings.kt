@@ -33,6 +33,12 @@ data class LauncherSettings(
     val mediaShowSource: Boolean = true,
     /** 検索バーの履歴の表示件数(0で履歴オフ) */
     val searchHistoryCount: Int = 5,
+    /** フォルダを開いたときの1行のアプリ数(3〜5) */
+    val folderCols: Int = 4,
+    /** ホームで上から下へスワイプして出す「クイックパネル」を使う */
+    val quickPanel: Boolean = true,
+    /** クイックパネルに表示するアプリ(パッケージ名をカンマ区切り。空なら Twitter(X)/Discord/Spotify などの既定) */
+    val quickApps: String = "",
     /** 追加したフォントのファイル名(アプリ内保存)。空なら標準 */
     val fontFile: String = "",
     val fontName: String = "",
@@ -96,6 +102,9 @@ data class LauncherSettings(
         put("marginDp", marginDp)
         put("mediaShowSource", mediaShowSource)
         put("searchHistoryCount", searchHistoryCount)
+        put("folderCols", folderCols)
+        put("quickPanel", quickPanel)
+        put("quickApps", quickApps)
         put("fontFile", fontFile)
         put("fontName", fontName)
         put("overlapPolicy", overlapPolicy)
@@ -168,14 +177,17 @@ data class LauncherSettings(
                 marginDp = o.optInt("marginDp", d.marginDp).coerceIn(0, 48),
                 mediaShowSource = o.optBoolean("mediaShowSource", d.mediaShowSource),
                 searchHistoryCount = o.optInt("searchHistoryCount", d.searchHistoryCount).coerceIn(0, 10),
+                folderCols = o.optInt("folderCols", d.folderCols).coerceIn(3, 5),
+                quickPanel = o.optBoolean("quickPanel", d.quickPanel),
+                quickApps = o.optString("quickApps", d.quickApps),
                 fontFile = o.optString("fontFile", d.fontFile).filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' },
                 fontName = o.optString("fontName", d.fontName).take(60),
                 overlapPolicy = oneOf(o.optString("overlapPolicy", d.overlapPolicy), setOf(OVERLAP, PUSH_DOWN, PUSH_UP, SHIFT), d.overlapPolicy),
                 showDock = o.optBoolean("showDock", d.showDock),
                 dockCount = o.optInt("dockCount", d.dockCount).coerceIn(3, 7),
-                dockHeightDp = o.optInt("dockHeightDp", d.dockHeightDp).coerceIn(48, 160),
+                dockHeightDp = o.optInt("dockHeightDp", d.dockHeightDp).coerceIn(48, 240),
                 dockIconAlpha = o.alpha("dockIconAlpha", d.dockIconAlpha, 0.1f),
-                dockIconSizeDp = o.optInt("dockIconSizeDp", d.dockIconSizeDp).coerceIn(24, 120),
+                dockIconSizeDp = o.optInt("dockIconSizeDp", d.dockIconSizeDp).coerceIn(24, 200),
                 mediaButtonSp = o.optInt("mediaButtonSp", d.mediaButtonSp).let { if (it <= 0) 0 else it.coerceIn(14, 44) },
                 mediaOverlay = o.optBoolean("mediaOverlay", d.mediaOverlay),
                 showEditButton = o.optBoolean("showEditButton", d.showEditButton),

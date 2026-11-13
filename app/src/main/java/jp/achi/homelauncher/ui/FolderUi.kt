@@ -125,6 +125,7 @@ fun FolderDialog(
     iconSizeDp: Int,
     labelSizeSp: Int,
     labelLines: Int = 2,
+    cols: Int = 4,
     onLaunch: (AppInfo) -> Unit,
     onPutOnHome: (AppInfo) -> Unit,
     onRemoveFromFolder: (AppInfo) -> Unit,
@@ -167,13 +168,13 @@ fun FolderDialog(
                     )
                 } else {
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(3),
+                        columns = GridCells.Fixed(cols.coerceIn(3, 5)),
                         modifier = Modifier.heightIn(max = 400.dp),
                     ) {
                         items(members, key = { it.key }) { app ->
                             AppCell(
                                 app = app,
-                                iconSizeDp = iconSizeDp,
+                                iconSizeDp = minOf(iconSizeDp, if (cols >= 5) 48 else if (cols == 4) 56 else 72),
                                 showLabel = true,
                                 labelSizeSp = labelSizeSp,
                                 onWallpaper = true,

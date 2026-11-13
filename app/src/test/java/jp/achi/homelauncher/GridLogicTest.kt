@@ -170,4 +170,14 @@ class GridLogicTest {
         val w = p.copy(work = true, userSerial = 10L)
         assertTrue(p.key != w.key)
     }
+
+    @Test
+    fun harmonizeSnapsFreeItemsAndKeepsOthers() {
+        val a = app(0, 0, 0)
+        val f = app(0, 0, 0).copy(free = true, fx = 2.4f, fy = 3.2f, fw = 1.3f, fh = 0.8f)
+        val out = jp.achi.homelauncher.data.AutoLayout.harmonize(listOf(a, f), 4, 6, 1, icons = true, widgets = false)
+        assertTrue(out.none { it.free })
+        assertTrue(out.all { it.spanX == 1 && it.spanY == 1 })
+        assertEquals(out.size, out.map { Triple(it.page, it.x, it.y) }.toSet().size)
+    }
 }
