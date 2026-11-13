@@ -124,6 +124,7 @@ fun FolderDialog(
     allApps: List<AppInfo>,
     iconSizeDp: Int,
     labelSizeSp: Int,
+    labelLines: Int = 2,
     onLaunch: (AppInfo) -> Unit,
     onPutOnHome: (AppInfo) -> Unit,
     onRemoveFromFolder: (AppInfo) -> Unit,
@@ -136,62 +137,91 @@ fun FolderDialog(
     var showRename by remember { mutableStateOf(false) }
     var menuApp by remember { mutableStateOf<AppInfo?>(null) }
     val members = folder.apps.mapNotNull { appMap[it] }
-    val ink = MaterialTheme.colorScheme.onSurface
+    val cs = MaterialTheme.colorScheme
+    val panel = androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.68f).copy(alpha = 0.9f)
+    val pill = androidx.compose.ui.graphics.lerp(cs.primary, Color.Black, 0.78f).copy(alpha = 0.95f)
+    var menuOpen by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Column(
-            Modifier
-                .fillMaxWidth(0.92f)
-                .clip(RoundedCornerShape(32.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
-                .padding(horizontal = 16.dp, vertical = 18.dp),
+            Modifier.fillMaxWidth(0.9f),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Text(
-                folder.name,
-                color = ink,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { showRename = true }
-                    .padding(horizontal = 14.dp, vertical = 6.dp),
-            )
-            if (members.isEmpty()) {
-                Text(
-                    "アプリがありません。下の「アプリを追加」から入れてください。",
-                    color = ink,
-                    modifier = Modifier.padding(vertical = 24.dp),
-                    textAlign = TextAlign.Center,
-                )
-            } else {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    modifier = Modifier.heightIn(max = 380.dp).padding(top = 10.dp),
-                ) {
-                    items(members, key = { it.key }) { app ->
-                        AppCell(
-                            app = app,
-                            iconSizeDp = iconSizeDp,
-                            showLabel = true,
-                            labelSizeSp = labelSizeSp,
-                            onWallpaper = false,
-                            modifier = Modifier.padding(vertical = 8.dp),
-                            onClick = { onLaunch(app) },
-                            onLongClick = { menuApp = app },
-                        )
+            // 参考画像のような、角が大きく丸い半透明のパネル(右下だけさらに大きく丸い)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 36.dp, topEnd = 36.dp, bottomEnd = 72.dp, bottomStart = 36.dp))
+                    .background(panel)
+                    .padding(start = 12.dp, end = 12.dp, top = 18.dp, bottom = 22.dp),
+            ) {
+                if (members.isEmpty()) {
+                    Text(
+                        "アプリがありません。下の「⋮」→「アプリを追加」から入れてください。",
+                        color = Color.White,
+                        modifier = Modifier.padding(vertical = 24.dp, horizontal = 8.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                } else {
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        modifier = Modifier.heightIn(max = 400.dp),
+                    ) {
+                        items(members, key = { it.key }) { app ->
+                            AppCell(
+                                app = app,
+                                iconSizeDp = iconSizeDp,
+                                showLabel = true,
+                                labelSizeSp = labelSizeSp,
+                                onWallpaper = true,
+                                labelLines = labelLines,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                onClick = { onLaunch(app) },
+                                onLongClick = { menuApp = app },
+                            )
+                        }
                     }
                 }
             }
-            Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                TextButton(onClick = { showPicker = true }) { Text("アプリを追加") }
-                TextButton(onClick = onDelete) { Text("フォルダ削除") }
-                TextButton(onClick = onDismiss) { Text("閉じる") }
+            // フォルダ名のピル(タップで名前変更)+ ⋮ メニュー
+            Row(
+                Modifier
+                    .padding(top = 8.dp)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(pill),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    folder.name,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { showRename = true }
+                        .padding(start = 40.dp, top = 14.dp, bottom = 14.dp),
+                )
+                Box {
+                    Text(
+                        "⋮",
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        modifier = Modifier.clickable { menuOpen = true }.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                    androidx.compose.material3.DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("名前を変更") }, onClick = { menuOpen = false; showRename = true })
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("アプリを追加") }, onClick = { menuOpen = false; showPicker = true })
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("フォルダ削除") }, onClick = { menuOpen = false; onDelete() })
+                        androidx.compose.material3.DropdownMenuItem(text = { Text("閉じる") }, onClick = { menuOpen = false; onDismiss() })
+                    }
+                }
             }
         }
     }

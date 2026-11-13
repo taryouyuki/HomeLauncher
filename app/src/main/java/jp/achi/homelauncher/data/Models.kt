@@ -165,7 +165,7 @@ data class HomeItem(
         const val MEDIA = "media"
         /** ブラウザ等から「ホーム画面に追加」されたショートカット。pkg=パッケージ, cls=ショートカットID, ref=表示名 */
         const val SHORTCUT = "shortcut"
-        private val TYPES = setOf(APP, WIDGET, FOLDER, STACK, SEARCH, MEDIA, SHORTCUT)
+        private val TYPES = setOf(APP, WIDGET, FOLDER, STACK, ICONS, SEARCH, MEDIA, SHORTCUT)
 
         fun fromJson(o: JSONObject): HomeItem {
             val type = o.getString("type")
