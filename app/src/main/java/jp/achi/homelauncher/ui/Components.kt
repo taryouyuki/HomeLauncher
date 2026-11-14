@@ -142,6 +142,20 @@ object IconCache {
 
 @Composable
 fun AppIcon(app: AppInfo, sizeDp: Int, modifier: Modifier = Modifier) {
+    val customPath = CustomIcons.map[app.key]
+    if (customPath != null) {
+        val custom by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, customPath) {
+            value = withContext(Dispatchers.Default) { CustomIcons.decode(customPath) }
+        }
+        val cs = iconShapeOf(LocalIconShape.current) ?: RoundedCornerShape(percent = 22)
+        val cb = custom
+        if (cb != null) {
+            Image(bitmap = cb, contentDescription = app.label, modifier = modifier.size(sizeDp.dp).clip(cs))
+        } else {
+            Spacer(modifier.size(sizeDp.dp))
+        }
+        return
+    }
     val context = LocalContext.current
     val tint = LocalIconTint.current
     // テーマアイコンは全面に描くので、形が「そのまま」のときは角丸四角で切り抜く

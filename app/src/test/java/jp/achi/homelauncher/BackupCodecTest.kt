@@ -129,6 +129,7 @@ class BackupCodecTest {
             marginDp = 12, mediaShowSource = false, searchHistoryCount = 3,
             folderCols = 5, quickPanel = false, quickApps = "a.b,c.d",
             freeWidgetsOnly = true, mergeOnDrop = false, iconShape = "heart_round",
+            gestureUp = "search", gestureDown = "app:a/b", gestureDouble = "edit",
             folderBgMode = "custom", folderBgColor = 0xFF112233.toInt(), folderBgAlpha = 0.5f, dockPages = 3,
         )
         val items = listOf(

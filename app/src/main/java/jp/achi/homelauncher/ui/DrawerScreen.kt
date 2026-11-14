@@ -74,6 +74,16 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () 
     val hiddenKeys by vm.hidden.collectAsStateWithLifecycle()
     var showHidden by remember { mutableStateOf(false) }
     var showSystem by remember { mutableStateOf(false) }
+    /** 絞り込み: "" / recent(最近入れた) / frequent(よく使う) / unused(未使用) */
+    var quickFilter by remember { mutableStateOf("") }
+    var iconPickKey by remember { mutableStateOf<String?>(null) }
+    val iconPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val k = iconPickKey
+        if (uri != null && k != null) vm.setCustomIcon(context, k, uri)
+        iconPickKey = null
+    }
     val allApps = if (showWork) workApps else personalApps
     val apps = remember(allApps, hiddenKeys, showHidden, showSystem) {
         allApps.filter { (it.key in hiddenKeys) == showHidden && (!showSystem || it.isSystem) }
@@ -93,8 +103,17 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () 
     val dateFmt = remember { SimpleDateFormat("yy/MM/dd", Locale.JAPAN) }
     val dateTimeFmt = remember { SimpleDateFormat("MM/dd HH:mm", Locale.JAPAN) }
 
-    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch, yomi, categories) {
+    val list = remember(apps, query, settings.drawerSort, counts, lastLaunch, yomi, categories, quickFilter) {
+        val now = System.currentTimeMillis()
         AppSorter.sort(AppSorter.filter(apps, query, yomi), settings.drawerSort, counts, lastLaunch, categories)
+            .filter { a ->
+                when (quickFilter) {
+                    "recent" -> now - a.installedAt < 14L * 24 * 3600 * 1000
+                    "frequent" -> (counts[a.key] ?: 0) >= 3
+                    "unused" -> (counts[a.key] ?: 0) == 0
+                    else -> true
+                }
+            }
     }
     val byCategory = settings.drawerSort == SortMode.CATEGORY
 
@@ -167,6 +186,9 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () 
                 SortChip("よく使う順", settings.drawerSort == SortMode.FREQUENT) { vm.setDrawerSort(SortMode.FREQUENT) }
                 SortChip("更新順", settings.drawerSort == SortMode.UPDATED) { vm.setDrawerSort(SortMode.UPDATED) }
                 SortChip("カテゴリー順", byCategory) { vm.setDrawerSort(SortMode.CATEGORY) }
+                FilterChip(selected = quickFilter == "recent", onClick = { quickFilter = if (quickFilter == "recent") "" else "recent" }, label = { Text("最近入れた") })
+                FilterChip(selected = quickFilter == "frequent", onClick = { quickFilter = if (quickFilter == "frequent") "" else "frequent" }, label = { Text("よく使う") })
+                FilterChip(selected = quickFilter == "unused", onClick = { quickFilter = if (quickFilter == "unused") "" else "unused" }, label = { Text("未使用") })
                 FilterChip(
                     selected = showSystem,
                     onClick = { showSystem = !showSystem },
@@ -333,6 +355,15 @@ fun DrawerScreen(vm: LauncherViewModel, onClose: () -> Unit, onOpenSettings: () 
                     menuApp = null
                     catApp = app
                 },
+                "アイコンを画像に変更" to {
+                    menuApp = null
+                    iconPickKey = app.key
+                    iconPicker.launch("image/*")
+                },
+                *(if (CustomIcons.map.containsKey(app.key)) arrayOf("元のアイコンに戻す" to {
+                    menuApp = null
+                    vm.clearCustomIcon(app.key)
+                }) else emptyArray<Pair<String, () -> Unit>>()),
                 (if (app.key in hiddenKeys) "アプリ一覧に再表示する" else "アプリ一覧から隠す") to {
                     menuApp = null
                     vm.setHidden(app.key, app.key !in hiddenKeys)

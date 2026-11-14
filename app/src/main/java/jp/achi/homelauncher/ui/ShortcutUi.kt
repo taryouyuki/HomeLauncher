@@ -2,6 +2,7 @@
 
 package jp.achi.homelauncher.ui
 
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import android.content.Context
 import android.content.pm.LauncherApps
@@ -121,10 +122,11 @@ fun ShortcutCell(
                 color = Color.White,
                 fontSize = labelSizeSp.sp,
                 maxLines = labelLines,
+                lineHeight = (labelSizeSp + 2).sp,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
-                style = TextStyle(fontFamily = LocalAppFont.current, shadow = Shadow(Color.Black, blurRadius = 6f)),
-                modifier = Modifier.padding(top = 2.dp).heightIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { ((labelSizeSp + 2).sp * labelLines).toDp() }),
+                style = TextStyle(fontFamily = LocalAppFont.current, fontSize = labelSizeSp.sp, shadow = Shadow(Color.Black, blurRadius = 6f)),
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp).heightIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { ((labelSizeSp + 2).sp * labelLines).toDp() }),
             )
         }
     }

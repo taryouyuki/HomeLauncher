@@ -175,6 +175,15 @@ fun HomeScreen(
     var emptyMenu by remember { mutableStateOf(false) }
     var emptyMenuPage by remember { mutableStateOf("") }
     var scPickApp by remember { mutableStateOf(false) }
+    var iconChangeItem by remember { mutableStateOf<HomeItem?>(null) }
+    var iconPickKey by remember { mutableStateOf<String?>(null) }
+    val iconPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent(),
+    ) { uri ->
+        val k = iconPickKey
+        if (uri != null && k != null) vm.setCustomIcon(context, k, uri)
+        iconPickKey = null
+    }
     var scApp by remember { mutableStateOf<AppInfo?>(null) }
     var scAt by remember { mutableStateOf<CellAt?>(null) }
     /** 空き地を長押しした位置(ページ, 列, 行)。メニューで追加するものはここに置く。 */
@@ -212,6 +221,15 @@ fun HomeScreen(
     var editMode by remember { mutableStateOf(false) }
     val editingNow = selectedId != null || editMode
     val editingRef by rememberUpdatedState(editingNow)
+    // 編集が終わったら、画面(ウィジェット・アプリ・通知)を更新する
+    var wasEditing by remember { mutableStateOf(false) }
+    LaunchedEffect(editingNow) {
+        if (wasEditing && !editingNow) {
+            refreshAll(vm, widgets, media)
+            refreshTick++
+        }
+        wasEditing = editingNow
+    }
     val editModeRef by rememberUpdatedState(editMode)
     val selectedRef by rememberUpdatedState(selectedId)
 
@@ -254,6 +272,21 @@ fun HomeScreen(
 
     fun launchApp(app: AppInfo) {
         vm.launch(context, app)
+    }
+
+    /** ジェスチャーに割り当てた操作を実行する。 */
+    fun runGesture(code: String) {
+        when {
+            code == "drawer" -> onOpenDrawer()
+            code == "quick" -> quickOpen = true
+            code == "search" -> searchOpen = true
+            code == "settings" -> onOpenSettings()
+            code == "edit" -> {
+                editMode = !editMode
+                selectedId = null
+            }
+            code.startsWith("app:") -> appMap[code.removePrefix("app:")]?.let { launchApp(it) }
+        }
     }
 
     /** 配置結果をお知らせする(空きなし/重ねた/ずらした)。 */
@@ -435,11 +468,11 @@ fun HomeScreen(
                         ty += d.y
                     }
                     if (!SwipeGuard.widgetTouched && !editingRef && ty < -120f && abs(ty) > abs(tx) * 1.5f) {
-                        onOpenDrawer()
+                        runGesture(vm.settings.value.gestureUp)
                     } else if (!SwipeGuard.widgetTouched && !editingRef && ty > 160f && abs(ty) > abs(tx) * 1.5f &&
                         vm.settings.value.quickPanel
                     ) {
-                        quickOpen = true
+                        runGesture(vm.settings.value.gestureDown)
                     }
                 }
             },
@@ -455,7 +488,8 @@ fun HomeScreen(
                 val viewportWpx = with(density) { maxWidth.toPx() }
                 LaunchedEffect(cellW, cellH) { cellDp = cellW.value to cellH.value }
 
-                HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { vp ->
+                // 項目を選んでいる間はページのスワイプを止める(ウィジェットを左右に動かすときに横取りされない)
+                HorizontalPager(state = pagerState, userScrollEnabled = selectedId == null, modifier = Modifier.fillMaxSize()) { vp ->
                     val page = vp % pageCountNow
                     val shown = items
                         .filter { it.page == page && it.parent.isEmpty() }
@@ -465,6 +499,10 @@ fun HomeScreen(
                             .fillMaxSize()
                             .pointerInput(page, cellWpx, cellHpx, cols, rows) {
                                 detectTapGestures(
+                                    onDoubleTap = {
+                                        // 何もない所のダブルタップ(割り当てたジェスチャー)
+                                        if (!editingRef) runGesture(vm.settings.value.gestureDouble)
+                                    },
                                     onTap = { off ->
                                         if (editModeRef && selectedRef == null) {
                                             // 編集モード: 空き地をタップで、その場所に追加するメニュー
@@ -660,6 +698,7 @@ fun HomeScreen(
                         TextButton(onClick = { folderPickItem = selectedItem }) { Text("フォルダへ") }
                     }
                     if (selectedItem.type == HomeItem.APP) {
+                        TextButton(onClick = { iconChangeItem = selectedItem }) { Text("アイコン変更") }
                         TextButton(onClick = { appMenuItem = selectedItem }) { Text("ショートカット・情報") }
                     }
                     if (selectedItem.type == HomeItem.WIDGET || selectedItem.type == HomeItem.STACK) {
@@ -933,6 +972,27 @@ fun HomeScreen(
                 }
             },
             onDismiss = { scApp = null },
+        )
+    }
+
+    iconChangeItem?.let { item ->
+        val key = item.appKey
+        MenuDialog(
+            title = "「${appMap[key]?.label ?: "アプリ"}」のアイコン",
+            entries = buildList {
+                add("ギャラリーの画像から選ぶ" to {
+                    iconChangeItem = null
+                    iconPickKey = key
+                    iconPicker.launch("image/*")
+                })
+                if (CustomIcons.map.containsKey(key)) {
+                    add("元のアイコンに戻す" to {
+                        iconChangeItem = null
+                        vm.clearCustomIcon(key)
+                    })
+                }
+            },
+            onDismiss = { iconChangeItem = null },
         )
     }
 

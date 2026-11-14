@@ -35,6 +35,10 @@ data class LauncherSettings(
     val searchHistoryCount: Int = 5,
     /** フォルダを開いたときの1行のアプリ数(3〜5) */
     val folderCols: Int = 4,
+    /** ジェスチャーの割り当て。none / drawer / quick / search / settings / edit / app:<key> */
+    val gestureUp: String = "drawer",
+    val gestureDown: String = "quick",
+    val gestureDouble: String = "none",
     /** フォルダを開いたときの背景色(auto=テーマの色)と不透明度 */
     val folderBgMode: String = "auto",
     val folderBgColor: Int = 0xFF5B1230.toInt(),
@@ -113,6 +117,9 @@ data class LauncherSettings(
         put("mediaShowSource", mediaShowSource)
         put("searchHistoryCount", searchHistoryCount)
         put("folderCols", folderCols)
+        put("gestureUp", gestureUp)
+        put("gestureDown", gestureDown)
+        put("gestureDouble", gestureDouble)
         put("folderBgMode", folderBgMode)
         put("folderBgColor", folderBgColor)
         put("folderBgAlpha", folderBgAlpha.toDouble())
@@ -194,6 +201,9 @@ data class LauncherSettings(
                 mediaShowSource = o.optBoolean("mediaShowSource", d.mediaShowSource),
                 searchHistoryCount = o.optInt("searchHistoryCount", d.searchHistoryCount).coerceIn(0, 10),
                 folderCols = o.optInt("folderCols", d.folderCols).coerceIn(3, 5),
+                gestureUp = o.optString("gestureUp", d.gestureUp),
+                gestureDown = o.optString("gestureDown", d.gestureDown),
+                gestureDouble = o.optString("gestureDouble", d.gestureDouble),
                 folderBgMode = oneOf(o.optString("folderBgMode", d.folderBgMode), setOf("auto", "custom"), d.folderBgMode),
                 folderBgColor = o.optInt("folderBgColor", d.folderBgColor),
                 folderBgAlpha = o.alpha("folderBgAlpha", d.folderBgAlpha, 0.2f),

@@ -3,6 +3,7 @@ package jp.achi.homelauncher
 import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
+import jp.achi.homelauncher.ui.CustomIcons
 import jp.achi.homelauncher.data.AppInfo
 import jp.achi.homelauncher.data.AppRepository
 import jp.achi.homelauncher.data.AutoLayout
@@ -24,6 +25,34 @@ typealias CellAt = Triple<Int, Int, Int>
 
 class LauncherViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = LauncherPrefs(app)
+    private val customIconInit = run { CustomIcons.map = prefs.loadStringMap("custom_icons") }
+
+    /** 選んだ画像を正方形に切り抜いてアプリのアイコンにする。 */
+    fun setCustomIcon(context: Context, appKey: String, uri: android.net.Uri) {
+        Thread {
+            runCatching {
+                val src = context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) } ?: return@runCatching
+                val side = minOf(src.width, src.height)
+                val sq = android.graphics.Bitmap.createBitmap(src, (src.width - side) / 2, (src.height - side) / 2, side, side)
+                val out = android.graphics.Bitmap.createScaledBitmap(sq, 256, 256, true)
+                val dir = java.io.File(context.filesDir, "icons").apply { mkdirs() }
+                val f = java.io.File(dir, "${System.currentTimeMillis()}.png")
+                f.outputStream().use { out.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                val old = CustomIcons.map[appKey]
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    CustomIcons.map = CustomIcons.map + (appKey to f.absolutePath)
+                    prefs.saveStringMap("custom_icons", CustomIcons.map)
+                    old?.let { java.io.File(it).delete() }
+                }
+            }
+        }.start()
+    }
+
+    fun clearCustomIcon(appKey: String) {
+        CustomIcons.map[appKey]?.let { java.io.File(it).delete() }
+        CustomIcons.map = CustomIcons.map - appKey
+        prefs.saveStringMap("custom_icons", CustomIcons.map)
+    }
     val repo = AppRepository(app)
 
     val apps = repo.apps

@@ -525,6 +525,15 @@ fun SettingsScreen(
                         }
 
                         else -> {
+                            Section("ジェスチャーの割り当て")
+                            GestureRow(vm, "上へスワイプ", s.gestureUp) { v -> update { it.copy(gestureUp = v) } }
+                            GestureRow(vm, "下へスワイプ", s.gestureDown) { v -> update { it.copy(gestureDown = v) } }
+                            GestureRow(vm, "何もない所をダブルタップ", s.gestureDouble) { v -> update { it.copy(gestureDouble = v) } }
+                            Text(
+                                "ウィジェットの上から始めたスワイプには反応しません。下へスワイプは、クイックパネルの設定(上)がオンのときだけ動きます。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.outline,
+                            )
                             Section("操作")
                             IntSliderRow("検索履歴の件数(0で記録しない)", s.searchHistoryCount, 0, 10) { v -> update { it.copy(searchHistoryCount = v) } }
                             SwitchRow("長押しの振動", s.haptics) { v -> update { it.copy(haptics = v) } }
@@ -695,3 +704,33 @@ private fun importFont(context: android.content.Context, uri: Uri): Pair<String,
     dir.listFiles()?.filter { it != file }?.forEach { it.delete() }
     file.name to display.substringBeforeLast('.')
 }.getOrNull()
+
+
+/** ジェスチャーに割り当てる操作を選ぶ行(なし/アプリ一覧/クイックパネル/検索/設定/編集モード/アプリ指定)。 */
+@Composable
+private fun GestureRow(vm: LauncherViewModel, label: String, value: String, onChange: (String) -> Unit) {
+    val apps by vm.apps.collectAsStateWithLifecycle()
+    var pick by remember { mutableStateOf(false) }
+    val choices = listOf(
+        "none" to "なし", "drawer" to "アプリ一覧", "quick" to "クイックパネル",
+        "search" to "検索", "settings" to "ランチャー設定", "edit" to "編集モード",
+    )
+    Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 6.dp))
+    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        choices.forEach { (code, name) ->
+            FilterChip(value == code, { onChange(code) }, { Text(name) })
+        }
+        val appName = if (value.startsWith("app:")) apps.firstOrNull { it.key == value.removePrefix("app:") }?.label else null
+        FilterChip(value.startsWith("app:"), { pick = true }, { Text(if (appName != null) "アプリ: $appName" else "アプリを指定") })
+    }
+    if (pick) {
+        AppPickerDialog(
+            apps = apps.sortedBy { it.label },
+            onPick = {
+                pick = false
+                onChange("app:" + it.key)
+            },
+            onDismiss = { pick = false },
+        )
+    }
+}
